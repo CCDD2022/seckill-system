@@ -1,4 +1,4 @@
 *.md
 !README.md
 /proto_output/
-/config/config.yaml
+config/*.yaml
