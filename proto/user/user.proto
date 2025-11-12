@@ -1,0 +1,60 @@
+syntax = "proto3";
+package user; // 包名保持为 user
+
+option go_package = "./proto_output/user";
+
+// UserService: 只负责用户资料的管理
+service UserService {
+  // 获取用户信息
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  // 更新用户信息
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+  // 修改密码
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+}
+
+// User 消息是这个服务的核心模型
+message User {
+  int64 id = 1;
+  string username = 2;
+  string email = 3;
+  string phone = 4;
+  string created_at = 5;
+  string updated_at = 6;
+}
+
+// --- 请求/响应消息 ---
+
+message GetUserRequest {
+  int64 user_id = 1;
+}
+
+message GetUserResponse {
+  int32 code = 1;
+  string message = 2;
+  User user = 3;
+}
+
+message UpdateUserRequest {
+  int64 user_id = 1;
+  // 用户名通常不允许修改，所以这里只放 email 和 phone
+  string email = 2;
+  string phone = 3;
+}
+
+message UpdateUserResponse {
+  int32 code = 1;
+  string message = 2;
+  User user = 3;
+}
+
+message ChangePasswordRequest {
+  int64 user_id = 1;
+  string old_password = 2;
+  string new_password = 3;
+}
+
+message ChangePasswordResponse {
+  int32 code = 1;
+  string message = 2;
+}

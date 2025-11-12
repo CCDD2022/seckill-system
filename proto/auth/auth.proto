@@ -1,0 +1,57 @@
+syntax = "proto3";
+package auth; // 包名改为 auth
+
+// 使用正确的 go_package 路径，指向生成代码的目录
+option go_package = "./proto_output/auth";
+
+// 导入 user.proto，因为我们需要在 Login/Register 后返回 User 信息
+import "proto/user/user.proto";
+
+// AuthService: 只负责认证相关操作
+service AuthService {
+  // 用户注册
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // 用户登录
+  rpc Login(LoginRequest) returns (LoginResponse);
+}
+
+// --- 请求/响应消息 ---
+
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+  string email = 3;
+  string phone = 4;
+}
+
+message RegisterResponse {
+  int32 code = 1;
+  string message = 2;
+  // 这里我们引用了从 user.proto 导入的 User 类型
+  user.User user = 3;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  int32 code = 1;
+  string message = 2;
+  string token = 3;
+  user.User user = 4;
+}
+
+message LogoutRequest {
+  int64 user_id = 1;
+  // 登出通常在网关层通过解析 token 完成，不一定需要传 token
+  // 但如果你的逻辑需要在服务端明确吊销某个 token，则需要它
+  string token = 2;
+}
+
+message LogoutResponse {
+  int32 code = 1;
+  string message = 2;
+}
+

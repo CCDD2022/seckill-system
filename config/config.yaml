@@ -1,0 +1,49 @@
+services:
+  # API网关（HTTP）
+  api_gateway:
+    port: 8080
+    host: "localhost" # 生产环境建议用 0.0.0.0
+
+  # 用户gRPC服务
+  user_service:
+    port: 50051
+    host: "localhost"  # Docker环境改为服务名，如 user-service
+
+  # 商品gRPC服务
+  product_service:
+    port: 50052
+    host: "localhost"
+
+  # 秒杀gRPC服务
+  seckill_service:
+    port: 50053
+    host: "localhost"
+
+  # 订单gRPC服务
+  order_service:
+    port: 50054
+    host: "localhost"
+  # 用户gRPC服务
+  auth_service:
+    port: 50055
+    host: "localhost"  # Docker环境改为服务名，如 user-service
+
+database:
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    user: "root"
+    password: "123456"
+    dbname: "seckill_shop"
+    max_open_conns: 100
+    max_idle_conns: 10
+
+  redis:
+    host: "localhost"
+    port: 6379
+    password: ""
+    db: 0
+
+jwt:
+  secret: "my-secret-key"
+  expire_hours: 24
