@@ -1,0 +1,12 @@
+# buf.gen.yaml
+version: v1
+# 每一个插件生成一种代码
+plugins:
+  # 第一个插件
+  - plugin: buf.build/protocolbuffers/go:v1.31.0
+    out: .                    # 输出到项目根目录
+    opt: paths=import         # 关键：使用proto中go_package的import路径
+
+  - plugin: buf.build/grpc/go:v1.3.0
+    out: .                    # 输出到项目根目录
+    opt: paths=import         # 关键：使用proto中go_package的import路径

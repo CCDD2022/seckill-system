@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package product;
+option go_package = "./proto_output/product";
+
+service ProductService {
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+}
+
+message Product {
+  int64 id = 1;
+  string name = 2;
+  string description = 3;
+  double price = 4;
+  int32 stock = 5;
+  string image_url = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message GetProductRequest {
+  int64 product_id = 1;
+}
+
+message GetProductResponse {
+  int32 code = 1;
+  string message = 2;
+  Product product = 3;
+}
+
+message ListProductsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+message ListProductsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Product products = 3;
+  int32 total = 4;
+}
