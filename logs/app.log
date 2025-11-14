@@ -1,0 +1,75 @@
+{"time":"2025-11-14T18:58:21.2319811+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T18:58:21.2436856+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T18:58:21.245892+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T18:58:21.2559971+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T18:58:46.3163373+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T18:58:46.328568+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T18:58:46.33067+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T18:58:46.3408394+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T18:58:54.635834+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T18:58:54.6478909+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T18:58:54.6520845+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T18:58:54.6628068+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T18:58:57.7167179+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T18:58:57.7282073+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T18:58:57.7482032+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T18:58:57.7487285+08:00","level":"INFO","msg":"Product gRPC service started on :","!BADKEY":50052}
+{"time":"2025-11-14T18:59:01.053477+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T18:59:01.0670199+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T18:59:01.0702278+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T18:59:01.080201+08:00","level":"INFO","msg":"User gRPC service started on :","port":50051}
+{"time":"2025-11-14T18:59:41.1777881+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T18:59:41.1903889+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T18:59:41.1932814+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T18:59:41.2047461+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:06:30.7927594+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:06:30.8270735+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:06:30.8849093+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:06:30.902325+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:06:48.6849728+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:06:48.6985563+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:06:48.7009688+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:06:48.711972+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:08:22.6130313+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:08:22.6279753+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:08:22.6375502+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:08:27.3213019+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:08:27.3365105+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:08:27.3465519+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:19:52.0577606+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:19:52.0699159+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:19:52.0722584+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:19:52.0817694+08:00","level":"INFO","msg":"User gRPC service started on :","port":50051}
+{"time":"2025-11-14T19:20:01.466416+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:20:01.4773451+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:20:01.4972836+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:20:01.4972836+08:00","level":"INFO","msg":"Product gRPC service started on :","!BADKEY":50052}
+{"time":"2025-11-14T19:20:05.4295485+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:20:05.4414237+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:20:05.4435499+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:20:05.4537067+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:24:35.0729017+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:24:35.0840711+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:24:35.086212+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:24:35.0954945+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:24:48.7377086+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:24:48.7485351+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:24:48.7912223+08:00","level":"INFO","msg":"warn: health check unavailable for","serviceName":"auth","addr":"localhost:50055","err":"rpc error: code = Unimplemented desc = unknown service grpc.health.v1.Health"}
+{"time":"2025-11-14T19:24:48.7912223+08:00","level":"INFO","msg":"Successfully connected to auth service at localhost:50055"}
+{"time":"2025-11-14T19:24:48.7933238+08:00","level":"INFO","msg":"warn: health check unavailable for","serviceName":"user","addr":"localhost:50051","err":"rpc error: code = Unimplemented desc = unknown service grpc.health.v1.Health"}
+{"time":"2025-11-14T19:24:48.7933238+08:00","level":"INFO","msg":"Successfully connected to user service at localhost:50051"}
+{"time":"2025-11-14T19:24:48.7948797+08:00","level":"INFO","msg":"warn: health check unavailable for","serviceName":"product","addr":"localhost:50052","err":"rpc error: code = Unimplemented desc = unknown service grpc.health.v1.Health"}
+{"time":"2025-11-14T19:24:48.7948797+08:00","level":"INFO","msg":"Successfully connected to product service at localhost:50052"}
+{"time":"2025-11-14T19:24:48.7948797+08:00","level":"INFO","msg":"API Gateway starting on localhost:8080"}
+{"time":"2025-11-14T19:26:06.4353704+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:26:06.4469986+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:26:06.4497853+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:26:06.4592575+08:00","level":"INFO","msg":"Auth gRPC service started on ","port":50055}
+{"time":"2025-11-14T19:26:10.4547568+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:26:10.4664248+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:26:10.4848837+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:26:10.4854098+08:00","level":"INFO","msg":"Product gRPC service started on :","!BADKEY":50052}
+{"time":"2025-11-14T19:26:16.9026253+08:00","level":"INFO","msg":"Logger initialized successfully","config":{"Level":"info","Format":"json","Output":"file","FilePath":"./logs/app.log","MaxSize":100,"MaxBackups":10,"MaxAge":30}}
+{"time":"2025-11-14T19:26:16.9142927+08:00","level":"INFO","msg":"Application bootstrapped successfully"}
+{"time":"2025-11-14T19:26:16.9170745+08:00","level":"INFO","msg":"顺利连接数据库"}
+{"time":"2025-11-14T19:26:16.9269891+08:00","level":"INFO","msg":"User gRPC service started on :","port":50051}

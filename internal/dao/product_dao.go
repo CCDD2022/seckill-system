@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
+
+	"github.com/CCDD2022/seckill-system/pkg/logger"
 
 	"github.com/CCDD2022/seckill-system/internal/model"
 	"github.com/redis/go-redis/v9"
@@ -60,7 +61,7 @@ func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Pro
 
 			//设置短过期时间（5分钟），防止长期占用缓存
 			if err := dao.redis.Set(ctx, cacheKey, cacheValue, 5*time.Minute).Err(); err != nil {
-				log.Printf("缓存写入失败(key=%s): %v", cacheKey, err) // 至少日志记录
+				logger.Info("缓存写入失败", "key", cacheKey, "err", err) // 至少日志记录
 			}
 
 			return nil, err // 返回原始错误给上游

@@ -3,7 +3,8 @@ package v1
 import (
 	"context"
 	"fmt"
-	"log"
+
+	"github.com/CCDD2022/seckill-system/pkg/logger"
 
 	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/proto_output/auth"
@@ -37,9 +38,9 @@ func InitClients(cfg *config.Config) (*Clients, error) {
 		return nil, err
 	}
 	// 在与底层连接的基础上 建立一个gRPC客户端
-	// .proto文件定义了AuthService服务 以及他所拥有的方法(Login等等)
+	// .proto文件定义了AuthService服务 以及他所拥有的方法(loggerin等等)
 	// protoc根据这些定义生成了AuthServiceClient结构体
-	// 它知道如何把go的方法调用 例如Client.Login() 转换成gRPC的二进制消息格式
+	// 它知道如何把go的方法调用 例如Client.loggerin() 转换成gRPC的二进制消息格式
 	// 并且通过authConn网络连接发送出去
 	clients.authConn = authConn
 	// 使用工厂方法 创建具体的gRPC客户端
@@ -86,10 +87,10 @@ func createConnection(serviceName string, host string, port int) (*grpc.ClientCo
 		}
 	} else {
 		// 如果服务未实现健康检查，不作为致命错误
-		log.Printf("warn: health check unavailable for %s at %s: %v", serviceName, addr, err)
+		logger.Info("warn: health check unavailable for", "serviceName", serviceName, "addr", addr, "err", err)
 	}
 
-	log.Printf("Successfully connected to %s service at %s", serviceName, addr)
+	logger.Info(fmt.Sprintf("Successfully connected to %s service at %s", serviceName, addr))
 	return conn, nil
 }
 

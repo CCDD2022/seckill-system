@@ -2,14 +2,14 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net"
 
-	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
 	"github.com/CCDD2022/seckill-system/internal/dao/redis"
 	"github.com/CCDD2022/seckill-system/internal/service"
+	"github.com/CCDD2022/seckill-system/pkg/app"
+	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/CCDD2022/seckill-system/proto_output/product"
 
 	"google.golang.org/grpc"
@@ -17,21 +17,18 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatal("配置加载失败", err)
-	}
+	cfg := app.BootstrapApp()
 
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
-		log.Fatalf("连接Mysql数据库失败: %v", err)
+		logger.Error("连接Mysql数据库失败: ", "err", err)
 	}
 
 	redisDB, err := redis.InitRedis(&cfg.Database.Redis)
 	if err != nil {
-		log.Fatalf("连接Redis数据库失败: %v", err)
+		logger.Error("连接Redis数据库失败: ", "err", err)
 	}
-	log.Println("顺利连接数据库")
+	logger.Info("顺利连接数据库")
 
 	ProductDao := dao.NewProductDao(db, redisDB)
 	// 创建 Product Service
@@ -47,11 +44,11 @@ func main() {
 	// 启动 gRPC 服务器
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Services.ProductService.Host, cfg.Services.ProductService.Port))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		logger.Error("Failed to listen: ", "err", err)
 	}
 
-	log.Println("Product gRPC service started on :", cfg.Services.ProductService.Port)
+	logger.Info("Product gRPC service started on :", cfg.Services.ProductService.Port)
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		logger.Error("Failed to serve: ", "err", err)
 	}
 }

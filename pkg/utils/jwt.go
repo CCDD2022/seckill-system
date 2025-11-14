@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
-
-	"github.com/CCDD2022/seckill-system/config"
 )
 
 // 可复用的错误定义
@@ -72,17 +70,4 @@ func (j *JWTUtil) ParseToken(tokenString string) (*Claims, error) {
 		return claims, nil
 	}
 	return nil, ErrTokenInvalid
-}
-
-// 默认JWT配置
-var defaultJWTUtil *JWTUtil
-
-func init() {
-	// 创建默认JWT工具，使用默认值或从配置加载
-	defaultJWTUtil = NewJWTUtil("your-secret-key", 24) // 默认24小时过期
-
-	// 尝试从配置加载JWT设置
-	if cfg, err := config.LoadConfig(); err == nil {
-		defaultJWTUtil = NewJWTUtil(cfg.JWT.Secret, cfg.JWT.ExpireHours)
-	}
 }

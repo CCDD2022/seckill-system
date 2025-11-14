@@ -6,9 +6,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-//viper 内部使用 mapstructure 库进行配置解析，而不是直接使用 yaml 标签。
-// Viper 默认情况下确实不能自动将连续的驼峰命名转换为蛇形命名。
-
 // ServicesConfig HTTP和gRPC服务器配置
 type ServicesConfig struct {
 	APIGateway     Service `yaml:"api_gateway" mapstructure:"api_gateway"`
@@ -25,19 +22,19 @@ type Service struct {
 }
 
 type Logger struct {
-	Level      string
-	Format     string
-	Output     string
-	FilePath   string `mapstructure:"file_path"`
-	MaxSize    int    `mapstructure:"max_size"`
-	MaxBackups int    `mapstructure:"max_backups"`
-	MaxAge     int    `mapstructure:"max_age"`
+	Level      string `yaml:"level"`  // ✅ 添加 yaml 标签
+	Format     string `yaml:"format"` // ✅ 添加 yaml 标签
+	Output     string `yaml:"output"` // ✅ 添加 yaml 标签
+	FilePath   string `yaml:"file_path" mapstructure:"file_path"`
+	MaxSize    int    `yaml:"max_size" mapstructure:"max_size"`
+	MaxBackups int    `yaml:"max_backups" mapstructure:"max_backups"`
+	MaxAge     int    `yaml:"max_age" mapstructure:"max_age"`
 }
 
 type ServerConfig struct {
 	Port         int    `yaml:"port"`
 	Mode         string `yaml:"mode"`
-	readTimeout  int    `yaml:"read_timeout" mapstructure:"read_timeout"`
+	ReadTimeout  int    `yaml:"read_timeout" mapstructure:"read_timeout"` // ✅ 改为大写
 	WriteTimeout int    `yaml:"write_timeout" mapstructure:"write_timeout"`
 }
 
@@ -77,44 +74,38 @@ type Config struct {
 	Services ServicesConfig `yaml:"services"`
 	Database Database       `yaml:"database"`
 	JWT      JWTConfig      `yaml:"jwt"`
-	Logger   Logger         `yaml:"log"`
+	Logger   Logger         `yaml:"log" mapstructure:"log"`
 }
 
-var globalConfig *Config
-
-func InitConfig(configPath string) error {
+func InitConfig(configPath string) (*Config, error) {
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
 
 	// 读取内容
 	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("读取配置文件失败:%v", err)
-	}
-	globalConfig = &Config{}
-	if err := viper.Unmarshal(globalConfig); err != nil {
-		return fmt.Errorf("解析配置文件失败:%v", err)
+		return nil, fmt.Errorf("读取配置文件失败:%v", err)
 	}
 
-	return nil
-}
-
-func GetConfig() *Config {
-	if globalConfig == nil {
-		panic("配置未初始化，请先调用InitConfig")
+	var globalConfig Config
+	if err := viper.Unmarshal(&globalConfig); err != nil {
+		return nil, fmt.Errorf("解析配置文件失败:%v", err)
 	}
-	return globalConfig
+
+	return &globalConfig, nil
 }
 
 // LoadConfig 加载配置文件并返回配置对象
 // 这个函数简化了配置加载过程，默认加载config.yaml
 func LoadConfig() (*Config, error) {
-	err := InitConfig("config/config.yaml")
+	cfg, err := InitConfig("./config/config.yaml")
 	if err != nil {
 		// 尝试当前目录
-		err = InitConfig("./config.yaml")
+		cfg, err = InitConfig("./config.yaml")
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %v", err)
 		}
 	}
-	return GetConfig(), nil
+
+	fmt.Println(cfg)
+	return cfg, nil
 }

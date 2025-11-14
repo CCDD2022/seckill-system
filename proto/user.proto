@@ -21,6 +21,8 @@ message User {
   string phone = 4;
   string created_at = 5;
   string updated_at = 6;
+  int32 status = 7;                     // 0:正常 1:禁用 2:风控限制
+  bool is_seckill_allowed = 8;          // 是否有秒杀资格
 }
 
 // --- 请求/响应消息 ---

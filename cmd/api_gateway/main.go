@@ -2,23 +2,20 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 
+	"github.com/CCDD2022/seckill-system/pkg/app"
+	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/gin-gonic/gin"
 
 	"github.com/CCDD2022/seckill-system/api/middleware"
 	v1 "github.com/CCDD2022/seckill-system/api/v1"
-	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/pkg/utils"
 )
 
 func main() {
 	// 加载配置
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
+	cfg := app.BootstrapApp()
 
 	// 设置Gin模式
 	switch cfg.Server.Mode {
@@ -45,7 +42,7 @@ func main() {
 	// 在这里 每个client
 	clients, err := v1.InitClients(cfg)
 	if err != nil {
-		log.Fatalf("Failed to init gRPC clients: %v", err)
+		logger.Error("Failed to init gRPC clients: ", "err", err)
 	}
 
 	// JWT 工具
@@ -75,8 +72,8 @@ func main() {
 
 	// 启动服务器
 	serverAddr := fmt.Sprintf("%s:%d", cfg.Services.APIGateway.Host, cfg.Services.APIGateway.Port)
-	log.Printf("API Gateway starting on %s", serverAddr)
+	logger.Info("API Gateway starting on " + serverAddr)
 	if err := r.Run(serverAddr); err != nil {
-		log.Fatalf("Failed to start API Gateway: %v", err)
+		logger.Error("Failed to start API Gateway: ", "err", err)
 	}
 }
