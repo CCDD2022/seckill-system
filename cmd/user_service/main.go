@@ -2,13 +2,15 @@ package main
 
 import (
 	"fmt"
-	"log"
+
+	"github.com/CCDD2022/seckill-system/pkg/logger"
+
 	"net"
 
-	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
 	"github.com/CCDD2022/seckill-system/internal/service"
+	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/proto_output/user"
 
 	"google.golang.org/grpc"
@@ -16,17 +18,14 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatalf("配置加载失败: %v", err)
-	}
+	cfg := app.BootstrapApp()
 
 	// 连接数据库
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
-		log.Fatalf("连接Mysql数据库失败: %v", err)
+		logger.Error("连接Mysql数据库失败: ", "err", err)
 	}
-	log.Println("顺利连接数据库")
+	logger.Info("顺利连接数据库")
 
 	userDao := dao.NewUserDao(db)
 	// 创建 User Service
@@ -42,11 +41,11 @@ func main() {
 	// 启动 gRPC 服务器
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Services.UserService.Host, cfg.Services.UserService.Port))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		logger.Error("Failed to listen: ", "err", err)
 	}
 
-	log.Println("User gRPC service started on :", cfg.Services.UserService.Port)
+	logger.Info("User gRPC service started on :", "port", cfg.Services.UserService.Port)
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		logger.Error("Failed to serve: ", "err", err)
 	}
 }
