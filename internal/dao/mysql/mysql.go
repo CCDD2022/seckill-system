@@ -2,7 +2,8 @@ package mysql
 
 import (
 	"fmt"
-	"seckill-system/config"
+
+	"github.com/CCDD2022/seckill-system/config"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

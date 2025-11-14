@@ -3,11 +3,12 @@ package service
 import (
 	"context"
 	"errors"
-	"seckill-system/internal/dao"
-	"seckill-system/pkg/e"
-	"seckill-system/pkg/utils"
-	"seckill-system/proto_output/user"
 	"time"
+
+	"github.com/CCDD2022/seckill-system/internal/dao"
+	"github.com/CCDD2022/seckill-system/pkg/e"
+	"github.com/CCDD2022/seckill-system/pkg/utils"
+	"github.com/CCDD2022/seckill-system/proto_output/user"
 
 	"gorm.io/gorm"
 )
@@ -28,7 +29,7 @@ func NewUserService(userDao *dao.UserDao) *UserService {
 
 func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*user.GetUserResponse, error) {
 	// 根据id获取用户
-	userInfo, err := s.userDao.GetUserByID(req.GetUserId())
+	userInfo, err := s.userDao.GetUserByID(ctx, req.GetUserId())
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &user.GetUserResponse{
@@ -59,7 +60,7 @@ func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*u
 
 func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserRequest) (*user.UpdateUserResponse, error) {
 	// 1. 检查用户是否存在
-	_, err := s.userDao.GetUserByID(req.GetUserId())
+	_, err := s.userDao.GetUserByID(ctx, req.GetUserId())
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &user.UpdateUserResponse{
@@ -91,7 +92,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 	}
 
 	// 4. 执行更新
-	if err := s.userDao.UpdateUser(req.GetUserId(), updates); err != nil {
+	if err := s.userDao.UpdateUser(ctx, req.GetUserId(), updates); err != nil {
 		return &user.UpdateUserResponse{
 			Code:    e.ERROR,
 			Message: e.GetMsg(e.ERROR),
@@ -99,7 +100,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 	}
 
 	// 5. 获取最新信息返回
-	updatedUser, _ := s.userDao.GetUserByID(req.GetUserId())
+	updatedUser, _ := s.userDao.GetUserByID(ctx, req.GetUserId())
 	return &user.UpdateUserResponse{
 		Code:    e.SUCCESS,
 		Message: e.GetMsg(e.SUCCESS),
@@ -116,7 +117,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 
 func (s *UserService) ChangePassword(ctx context.Context, req *user.ChangePasswordRequest) (*user.ChangePasswordResponse, error) {
 	// 1. 检查用户并验证旧密码
-	userInfo, err := s.userDao.GetUserByID(req.GetUserId())
+	userInfo, err := s.userDao.GetUserByID(ctx, req.GetUserId())
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &user.ChangePasswordResponse{
@@ -151,7 +152,7 @@ func (s *UserService) ChangePassword(ctx context.Context, req *user.ChangePasswo
 		return &user.ChangePasswordResponse{Code: e.ERROR, Message: e.GetMsg(e.ERROR)}, err
 	}
 
-	if err := s.userDao.UpdateUserPassword(req.GetUserId(), newHash); err != nil {
+	if err := s.userDao.UpdateUserPassword(ctx, req.GetUserId(), newHash); err != nil {
 		return &user.ChangePasswordResponse{Code: e.ERROR, Message: e.GetMsg(e.ERROR)}, err
 	}
 

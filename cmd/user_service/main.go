@@ -4,24 +4,22 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"seckill-system/config"
-	"seckill-system/internal/dao"
-	"seckill-system/internal/dao/mysql"
-	"seckill-system/internal/service"
-	"seckill-system/proto_output/user"
+
+	"github.com/CCDD2022/seckill-system/config"
+	"github.com/CCDD2022/seckill-system/internal/dao"
+	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
+	"github.com/CCDD2022/seckill-system/internal/service"
+	"github.com/CCDD2022/seckill-system/proto_output/user"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
 func main() {
-	err := config.InitConfig("./config/config.yaml")
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("配置加载失败: %v", err)
 	}
-
-	// 获取配置使用
-	cfg := config.GetConfig()
 
 	// 连接数据库
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
@@ -42,7 +40,7 @@ func main() {
 	user.RegisterUserServiceServer(grpcServer, userService)
 
 	// 启动 gRPC 服务器
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%s", cfg.Services.UserService.Host, cfg.Services.UserService.Port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Services.UserService.Host, cfg.Services.UserService.Port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
