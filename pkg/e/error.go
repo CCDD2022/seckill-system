@@ -19,7 +19,7 @@ const (
 	ERROR_STOCK_NOT_ENOUGH   = 30002
 )
 
-var MsgFlags = map[int]string{
+var msgFlags = map[int]string{
 	SUCCESS:        "成功",
 	ERROR:          "失败",
 	INVALID_PARAMS: "请求参数错误",
@@ -38,9 +38,9 @@ var MsgFlags = map[int]string{
 }
 
 func GetMsg(code int) string {
-	msg, ok := MsgFlags[code]
+	msg, ok := msgFlags[code]
 	if ok {
 		return msg
 	}
-	return MsgFlags[ERROR]
+	return msgFlags[ERROR]
 }

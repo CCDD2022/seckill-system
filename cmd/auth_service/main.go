@@ -4,22 +4,22 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"seckill-system/config"
-	"seckill-system/internal/dao"
-	"seckill-system/internal/dao/mysql"
-	"seckill-system/internal/service"
-	"seckill-system/proto_output/user"
+
+	"github.com/CCDD2022/seckill-system/config"
+	"github.com/CCDD2022/seckill-system/internal/dao"
+	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
+	"github.com/CCDD2022/seckill-system/internal/service"
+	"github.com/CCDD2022/seckill-system/proto_output/auth"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
 func main() {
-	err := config.InitConfig("./contig/config.yaml")
+	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatal("配置加载失败"err)
+		log.Fatal("配置加载失败", err)
 	}
-	cfg := config.GetConfig()
 
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
@@ -27,24 +27,24 @@ func main() {
 	}
 	log.Println("顺利连接数据库")
 
-	userDao := dao.NewAuthDao(db)
-	// 创建 User Service
-	userService := service.NewAuthService(userDao)
+	authDao := dao.NewAuthDao(db)
+	// 创建 Auth Service
+	authService := service.NewAuthService(authDao, cfg.JWT.Secret, cfg.JWT.ExpireHours)
 
 	// 创建 gRPC 服务器
 	grpcServer := grpc.NewServer()
 	// 测试的时候会依赖反射调用  生产环境要去掉
 	reflection.Register(grpcServer)
-	// 当收到user.UserService/Register的时候  调用userService.Register方法
-	user.RegisterUserServiceServer(grpcServer, userService)
+	// 当收到auth.authService/Register的时候  调用authService.Register方法
+	auth.RegisterAuthServiceServer(grpcServer, authService)
 
 	// 启动 gRPC 服务器
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%s", cfg.Services.UserService.Host, cfg.Services.UserService.Port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Services.AuthService.Host, cfg.Services.AuthService.Port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	log.Println("User gRPC service started on :", cfg.Services.UserService.Port)
+	log.Println("Auth gRPC service started on :", cfg.Services.AuthService.Port)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}

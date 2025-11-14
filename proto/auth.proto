@@ -2,10 +2,16 @@ syntax = "proto3";
 package auth; // 包名改为 auth
 
 // 使用正确的 go_package 路径，指向生成代码的目录
-option go_package = "./proto_output/auth";
+option go_package = "proto_output/auth";
 
-// 导入 user.proto，因为我们需要在 Login/Register 后返回 User 信息
-import "proto/user/user.proto";
+message User {
+  int64 id = 1;
+  string username = 2;
+  string email = 3;
+  string phone = 4;
+  string created_at = 5;
+  string updated_at = 6;
+}
 
 // AuthService: 只负责认证相关操作
 service AuthService {
@@ -28,7 +34,7 @@ message RegisterResponse {
   int32 code = 1;
   string message = 2;
   // 这里我们引用了从 user.proto 导入的 User 类型
-  user.User user = 3;
+  User user = 3;
 }
 
 message LoginRequest {
@@ -40,18 +46,6 @@ message LoginResponse {
   int32 code = 1;
   string message = 2;
   string token = 3;
-  user.User user = 4;
-}
-
-message LogoutRequest {
-  int64 user_id = 1;
-  // 登出通常在网关层通过解析 token 完成，不一定需要传 token
-  // 但如果你的逻辑需要在服务端明确吊销某个 token，则需要它
-  string token = 2;
-}
-
-message LogoutResponse {
-  int32 code = 1;
-  string message = 2;
+  User user = 4;
 }
 

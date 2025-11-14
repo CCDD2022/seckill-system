@@ -1,7 +1,7 @@
 syntax = "proto3";
 package user; // 包名保持为 user
 
-option go_package = "./proto_output/user";
+option go_package = "proto_output/user";
 
 // UserService: 只负责用户资料的管理
 service UserService {

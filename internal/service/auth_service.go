@@ -3,13 +3,14 @@ package service
 import (
 	"context"
 	"errors"
-	"seckill-system/internal/dao"
-	"seckill-system/internal/model"
-	"seckill-system/pkg/e"
-	"seckill-system/pkg/utils"
-	"seckill-system/proto_output/auth"
-	"seckill-system/proto_output/user"
+
 	"time"
+
+	"github.com/CCDD2022/seckill-system/internal/dao"
+	"github.com/CCDD2022/seckill-system/internal/model"
+	"github.com/CCDD2022/seckill-system/pkg/e"
+	"github.com/CCDD2022/seckill-system/pkg/utils"
+	"github.com/CCDD2022/seckill-system/proto_output/auth"
 
 	"gorm.io/gorm"
 )
@@ -19,7 +20,7 @@ import (
 type AuthService struct {
 	authDao *dao.AuthDao
 	jwtUtil *utils.JWTUtil
-	user.UnimplementedUserServiceServer
+	auth.UnimplementedAuthServiceServer
 }
 
 func NewAuthService(authDao *dao.AuthDao, jwtSecret string, jwtExpireHours int) *AuthService {
@@ -29,9 +30,9 @@ func NewAuthService(authDao *dao.AuthDao, jwtSecret string, jwtExpireHours int) 
 	}
 }
 
-func (s *AuthService) Register(_ context.Context, req *auth.RegisterRequest) (*auth.RegisterResponse, error) {
+func (s *AuthService) Register(ctx context.Context, req *auth.RegisterRequest) (*auth.RegisterResponse, error) {
 	// 检查用户是否存在
-	exists, err := s.authDao.UserExists(req.Username)
+	exists, err := s.authDao.UserExists(ctx, req.Username)
 	if err != nil {
 		return &auth.RegisterResponse{
 			Code:    e.ERROR,
@@ -61,7 +62,7 @@ func (s *AuthService) Register(_ context.Context, req *auth.RegisterRequest) (*a
 	}
 
 	// 调用dao层  执行数据库操作
-	err = s.authDao.CreateUser(newUser)
+	err = s.authDao.CreateUser(ctx, newUser)
 	if err != nil {
 		return &auth.RegisterResponse{
 			Code:    e.ERROR,
@@ -70,7 +71,7 @@ func (s *AuthService) Register(_ context.Context, req *auth.RegisterRequest) (*a
 	}
 
 	// 返回用户信息
-	userProto := &user.User{
+	userProto := &auth.User{
 		Id:        newUser.ID,
 		Username:  newUser.Username,
 		Email:     newUser.Email,
@@ -86,9 +87,9 @@ func (s *AuthService) Register(_ context.Context, req *auth.RegisterRequest) (*a
 	}, nil
 }
 
-func (s *AuthService) Login(_ context.Context, req *auth.LoginRequest) (*auth.LoginResponse, error) {
+func (s *AuthService) Login(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResponse, error) {
 	// 获取用户信息
-	dbUser, err := s.authDao.GetUserByUsername(req.Username)
+	dbUser, err := s.authDao.GetUserByUsername(ctx, req.Username)
 	if err != nil {
 		// 未找到记录
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -122,7 +123,7 @@ func (s *AuthService) Login(_ context.Context, req *auth.LoginRequest) (*auth.Lo
 	}
 
 	// 返回用户信息
-	userProto := &user.User{
+	userProto := &auth.User{
 		Id:        dbUser.ID,
 		Username:  dbUser.Username,
 		Email:     dbUser.Email,

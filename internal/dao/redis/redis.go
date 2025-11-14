@@ -3,8 +3,9 @@ package redis
 import (
 	"context"
 	"fmt"
-	"seckill-system/config"
 	"time"
+
+	"github.com/CCDD2022/seckill-system/config"
 
 	"github.com/redis/go-redis/v9"
 )
