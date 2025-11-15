@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
-	"github.com/CCDD2022/seckill-system/pkg/e"
 	"github.com/CCDD2022/seckill-system/proto_output/seckill"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/streadway/amqp"
 )
 
