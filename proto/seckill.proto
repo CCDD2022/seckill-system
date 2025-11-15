@@ -4,8 +4,8 @@ package seckill;
 // 使用正确的 go_package 路径，指向生成代码的目录
 option go_package = "proto_output/seckill";
 
-service Seckill{
-  rpc ExecuteSeckill()
+service SeckillService {
+  rpc ExecuteSeckill(SeckillRequest) returns (SeckillResponse);
 }
 
 message SeckillRequest {
