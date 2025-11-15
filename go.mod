@@ -4,12 +4,12 @@ go 1.25.3
 
 require (
 	github.com/gin-gonic/gin v1.11.0
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/redis/go-redis/v9 v9.16.0
 	github.com/spf13/viper v1.21.0
 	github.com/streadway/amqp v1.1.0
 	golang.org/x/crypto v0.44.0
+	golang.org/x/time v0.14.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
