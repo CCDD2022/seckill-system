@@ -1,0 +1,72 @@
+syntax = "proto3";
+package order;
+
+option go_package = "proto_output/order";
+
+service OrderService {
+  // 创建订单
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  // 获取订单
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  // 获取用户订单列表
+  rpc ListUserOrders(ListUserOrdersRequest) returns (ListUserOrdersResponse);
+  // 取消订单
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+message Order {
+  int64 id = 1;
+  int64 user_id = 2;
+  int64 product_id = 3;
+  int32 quantity = 4;
+  double total_price = 5;
+  int32 status = 6;  // 0:待支付 1:已支付 2:已取消 3:已完成
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message CreateOrderRequest {
+  int64 user_id = 1;
+  int64 product_id = 2;
+  int32 quantity = 3;
+  double total_price = 4;
+}
+
+message CreateOrderResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 order_id = 3;
+}
+
+message GetOrderRequest {
+  int64 order_id = 1;
+}
+
+message GetOrderResponse {
+  int32 code = 1;
+  string message = 2;
+  Order order = 3;
+}
+
+message ListUserOrdersRequest {
+  int64 user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListUserOrdersResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Order orders = 3;
+  int32 total = 4;
+}
+
+message CancelOrderRequest {
+  int64 order_id = 1;
+  int64 user_id = 2;
+}
+
+message CancelOrderResponse {
+  int32 code = 1;
+  string message = 2;
+}

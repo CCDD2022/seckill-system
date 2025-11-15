@@ -68,6 +68,14 @@ type Database struct {
 	Redis RedisConfig `yaml:"redis"`
 }
 
+// MQConfig RabbitMQ配置
+type MQConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+}
+
 // Config 总配置结构体，嵌套所有子配置
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
@@ -75,6 +83,7 @@ type Config struct {
 	Database Database       `yaml:"database"`
 	JWT      JWTConfig      `yaml:"jwt"`
 	Logger   Logger         `yaml:"log" mapstructure:"log"`
+	MQ       MQConfig       `yaml:"mq"`
 }
 
 func InitConfig(configPath string) (*Config, error) {
