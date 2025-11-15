@@ -47,46 +47,129 @@
 
 ### 环境依赖
 
-*   Go (1.18+ a)
+*   Go (1.21+)
 *   Docker
 *   Docker Compose
-*   protoc (及 protoc-gen-go, protoc-gen-go-grpc 插件)
+*   MySQL 8.0
+*   Redis 7+
+*   RabbitMQ 3+
 
-### 运行项目
+### 方式一：Docker Compose 启动（推荐）
+
+这是最简单的启动方式，它会自动构建并启动所有服务（包括 Go 应用、MySQL、Redis、RabbitMQ）。
 
 1.  **克隆项目到本地**
     ```bash
-    git clone https://github.com/your-username/seckill-shop.git
-    cd seckill-shop
+    git clone https://github.com/CCDD2022/seckill-system.git
+    cd seckill-system
     ```
 
-2.  **生成 gRPC 代码**
-    如果 `proto` 文件有更新，需要重新生成。
-    ```bash
-    # (确保已安装 protoc 及相关插件)
-    make proto
-    ```
-    *(你可能需要在 `Makefile` 中定义此命令)*
-
-3.  **配置环境**
-    复制 `config/config.yaml.example` 为 `config/config.yaml`，并根据需要修改其中的数据库、Redis 等连接信息。
-    ```bash
-    cp config/config.yaml.example config/config.yaml
-    ```
-    *(默认配置已适配 `docker-compose.yml`，通常无需修改即可运行)*
-
-4.  **使用 Docker Compose 一键启动**
-    这是最推荐的启动方式，它会自动构建并启动所有服务（包括 Go 应用、MySQL、Redis、RabbitMQ）。
+2.  **启动所有服务**
     ```bash
     docker-compose up --build
     ```
 
-5.  **服务状态检查**
-    *   API Gateway 将运行在: `http://localhost:8080`
+3.  **服务状态检查**
+    *   API Gateway: `http://localhost:8080`
     *   RabbitMQ 管理后台: `http://localhost:15672` (guest/guest)
-    *   数据库等服务端口已映射，可通过客户端连接。
+    *   MySQL: `localhost:3306` (root/root123)
+    *   Redis: `localhost:6379`
 
-项目成功启动后，您可以使用 Postman 或其他 API 工具与 `http://localhost:8080` 上的接口进行交互。
+### 方式二：本地开发启动
+
+1.  **克隆项目到本地**
+    ```bash
+    git clone https://github.com/CCDD2022/seckill-system.git
+    cd seckill-system
+    ```
+
+2.  **安装依赖**
+    ```bash
+    go mod download
+    ```
+
+3.  **配置环境**
+    ```bash
+    cp config/config.yaml.example config/config.yaml
+    # 修改 config/config.yaml 中的数据库、Redis、RabbitMQ 连接信息
+    ```
+
+4.  **初始化数据库**
+    ```bash
+    # 执行 scripts/init.sql 中的 SQL 语句
+    mysql -u root -p < scripts/init.sql
+    ```
+
+5.  **启动各个服务**（需要在不同的终端窗口中运行）
+    ```bash
+    # 终端1: 启动 Auth Service
+    go run cmd/auth_service/main.go
+    
+    # 终端2: 启动 User Service
+    go run cmd/user_service/main.go
+    
+    # 终端3: 启动 Product Service
+    go run cmd/product_service/main.go
+    
+    # 终端4: 启动 Seckill Service
+    go run cmd/seckill_service/main.go
+    
+    # 终端5: 启动 Order Consumer
+    go run cmd/order_consumer/main.go
+    
+    # 终端6: 启动 API Gateway
+    go run cmd/api_gateway/main.go
+    ```
+
+### API 使用示例
+
+项目成功启动后，您可以使用以下 API 进行测试：
+
+#### 1. 用户注册
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "password": "password123",
+    "email": "test@example.com",
+    "phone": "13800138000"
+  }'
+```
+
+#### 2. 用户登录
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser1",
+    "password": "password123"
+  }'
+```
+
+#### 3. 获取商品列表（需要登录）
+```bash
+curl -X GET "http://localhost:8080/api/v1/products?page=1&page_size=10" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+#### 4. 执行秒杀（需要登录）
+```bash
+curl -X POST http://localhost:8080/api/v1/seckill/execute \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "product_id": 1,
+    "quantity": 1
+  }'
+```
+
+### 测试账户
+
+系统已预置测试账户（密码均为 `password123`）：
+- `testuser1` / `password123`
+- `testuser2` / `password123`
+- `testuser3` / `password123`
 
 ##  项目结构
 
