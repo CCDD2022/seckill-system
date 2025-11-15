@@ -30,6 +30,9 @@ func main() {
 	// 初始化Gin引擎
 	r := gin.Default()
 
+	// 全局限流中间件 (每秒100个请求，允许200个突发)
+	r.Use(middleware.RateLimitMiddleware(100, 200))
+
 	// 健康检查接口
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -52,6 +55,7 @@ func main() {
 	authHandler := v1.NewAuthHandler(clients.AuthService)
 	userHandler := v1.NewUserHandler(clients.UserService)
 	productHandler := v1.NewProductHandler(clients.ProductService)
+	seckillHandler := v1.NewSeckillHandler(clients.SeckillService)
 
 	// 定义API路由组
 	api := r.Group("/api/v1")
@@ -67,6 +71,14 @@ func main() {
 			userHandler.RegisterRoutes(protected)
 			// 注册商品路由
 			productHandler.RegisterRoutes(protected)
+		}
+
+		// 秒杀路由（需要JWT认证 + 更严格的限流）
+		seckillProtected := api.Group("")
+		seckillProtected.Use(middleware.JWTAuthMiddleware(jwtUtil))
+		seckillProtected.Use(middleware.SeckillRateLimitMiddleware())
+		{
+			seckillHandler.RegisterRoutes(seckillProtected)
 		}
 	}
 

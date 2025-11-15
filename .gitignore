@@ -1,4 +1,44 @@
-*.md
-!README.md
-/proto_output/
-config/*.yaml
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Config files (keep example files)
+config/config.yaml
+
+# Temporary files
+tmp/
+temp/
+
+# Build artifacts
+/dist/
