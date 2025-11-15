@@ -9,6 +9,7 @@ import (
 	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/proto_output/auth"
 	"github.com/CCDD2022/seckill-system/proto_output/product"
+	"github.com/CCDD2022/seckill-system/proto_output/seckill"
 	"github.com/CCDD2022/seckill-system/proto_output/user"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -20,10 +21,12 @@ type Clients struct {
 	AuthService    auth.AuthServiceClient       // 认证服务客户端
 	UserService    user.UserServiceClient       // 用户服务客户端
 	ProductService product.ProductServiceClient // 商品服务客户端
+	SeckillService seckill.SeckillServiceClient // 秒杀服务客户端
 	// 保存底层的*grpc.ClientConn 以便在关闭时释放资源或需要访问底层连接选项时使用
 	authConn    *grpc.ClientConn // 认证服务连接
 	userConn    *grpc.ClientConn // 用户服务连接
 	productConn *grpc.ClientConn // 商品服务连接
+	seckillConn *grpc.ClientConn // 秒杀服务连接
 }
 
 func InitClients(cfg *config.Config) (*Clients, error) {
@@ -63,6 +66,15 @@ func InitClients(cfg *config.Config) (*Clients, error) {
 	}
 	clients.productConn = productConn
 	clients.ProductService = product.NewProductServiceClient(productConn)
+
+	// ✅ 连接SeckillService
+	seckillConn, err := createConnection("seckill", cfg.Services.SeckillService.Host, cfg.Services.SeckillService.Port)
+	if err != nil {
+		clients.Close()
+		return nil, err
+	}
+	clients.seckillConn = seckillConn
+	clients.SeckillService = seckill.NewSeckillServiceClient(seckillConn)
 
 	return clients, nil
 }
@@ -109,6 +121,11 @@ func (c *Clients) Close() error {
 	if c.authConn != nil {
 		if err := c.authConn.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("auth conn: %w", err))
+		}
+	}
+	if c.seckillConn != nil {
+		if err := c.seckillConn.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("seckill conn: %w", err))
 		}
 	}
 	if len(errs) > 0 {

@@ -52,6 +52,7 @@ func main() {
 	authHandler := v1.NewAuthHandler(clients.AuthService)
 	userHandler := v1.NewUserHandler(clients.UserService)
 	productHandler := v1.NewProductHandler(clients.ProductService)
+	seckillHandler := v1.NewSeckillHandler(clients.SeckillService)
 
 	// 定义API路由组
 	api := r.Group("/api/v1")
@@ -67,6 +68,8 @@ func main() {
 			userHandler.RegisterRoutes(protected)
 			// 注册商品路由
 			productHandler.RegisterRoutes(protected)
+			// 注册秒杀路由
+			seckillHandler.RegisterRoutes(protected)
 		}
 	}
 
