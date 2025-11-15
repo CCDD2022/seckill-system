@@ -13,8 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// todo 要先验证token  应该是使用拦截器的方式
-
 // UserService 这个类指定了 所有的依赖字段 和对应的方法
 type UserService struct {
 	userDao *dao.UserDao
@@ -60,7 +58,7 @@ func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*u
 
 func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserRequest) (*user.UpdateUserResponse, error) {
 	// 1. 检查用户是否存在
-	_, err := s.userDao.GetUserByID(ctx, req.GetUserId())
+	userInfo, err := s.userDao.GetUserByID(ctx, req.GetUserId())
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &user.UpdateUserResponse{
@@ -76,10 +74,10 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 
 	// 2. 构建更新字段（只有 email 和 phone）
 	updates := map[string]interface{}{}
-	if req.Email != "" {
+	if req.Email != "" && userInfo.Email != req.Email {
 		updates["email"] = req.Email
 	}
-	if req.Phone != "" {
+	if req.Phone != "" && userInfo.Phone != req.Phone {
 		updates["phone"] = req.Phone
 	}
 
@@ -87,7 +85,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 	if len(updates) == 0 {
 		return &user.UpdateUserResponse{
 			Code:    e.SUCCESS,
-			Message: "暂无需要更新内容",
+			Message: "暂无需要更新字段",
 		}, nil
 	}
 
