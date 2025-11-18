@@ -167,10 +167,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 // RegisterRoutes 注册用户路由
 func (h *UserHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	users := rg.Group("/users")
-	{
-		users.GET("/profile", h.GetProfile)
-		users.PUT("/profile", h.UpdateProfile)
-		users.PUT("/password", h.ChangePassword)
-	}
+	rg.GET("/profile", h.GetProfile)
+	rg.PUT("/profile", h.UpdateProfile)
+	rg.PUT("/password", h.ChangePassword)
 }

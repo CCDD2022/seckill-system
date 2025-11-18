@@ -271,12 +271,11 @@ func (h *ProductHandler) DeleteProduct(c *gin.Context) {
 
 // RegisterRoutes 注册商品相关路由
 func (h *ProductHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	products := rg.Group("/products")
-	{
-		products.GET("/:id", h.GetProduct)
-		products.GET("", h.ListProducts)
-		products.POST("", h.CreateProduct)
-		products.PUT("/:id", h.UpdateProduct)
-		products.DELETE("/:id", h.DeleteProduct)
-	}
+	
+	rg.GET("/:id", h.GetProduct)
+	rg.GET("", h.ListProducts)
+	rg.POST("", h.CreateProduct)
+	rg.PUT("/:id", h.UpdateProduct)
+	rg.DELETE("/:id", h.DeleteProduct)
+	
 }

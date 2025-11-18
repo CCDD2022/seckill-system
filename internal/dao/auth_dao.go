@@ -18,7 +18,6 @@ func NewAuthDao(db *gorm.DB) *AuthDao {
 
 // CreateUser 创建用户
 func (dao *AuthDao) CreateUser(ctx context.Context, user *model.User) error {
-	dao.db.AutoMigrate(&model.User{})
 	return dao.db.WithContext(ctx).Create(user).Error
 }
 
@@ -34,6 +33,7 @@ func (dao *AuthDao) GetUserByUsername(ctx context.Context, username string) (*mo
 
 // UserExists 检查用户名是否存在
 func (dao *AuthDao) UserExists(ctx context.Context, username string) (bool, error) {
+	
 	var count int64
 	err := dao.db.WithContext(ctx).Model(&model.User{}).Where("username = ?", username).Count(&count).Error
 	if err != nil {

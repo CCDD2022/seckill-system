@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/CCDD2022/seckill-system/config"
+	"github.com/CCDD2022/seckill-system/internal/model"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -40,7 +41,15 @@ func InitDB(cfg *config.MySQLConfig) (*gorm.DB, error) {
 	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns * 2)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+
+	db.AutoMigrate(
+		&model.User{},
+		&model.Product{},
+		&model.Order{},
+	)
 	return db, nil
+
+	
 }
 
 func GetDB() *gorm.DB {

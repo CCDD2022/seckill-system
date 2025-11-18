@@ -22,7 +22,7 @@ var ErrOrderStatusChanged = errors.New("订单状态已变更")
 
 // CreateOrder 创建订单
 func (d *OrderDao) CreateOrder(ctx context.Context, order *model.Order) error {
-	d.db.AutoMigrate(&model.Order{})
+	
 	return d.db.WithContext(ctx).Create(order).Error
 }
 

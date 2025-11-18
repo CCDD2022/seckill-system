@@ -13,7 +13,7 @@ RUN go mod download
 
 # 复制源代码
 COPY . .
-
+di
 # 构建参数
 ARG SERVICE_NAME
 

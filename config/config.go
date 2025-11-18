@@ -132,7 +132,7 @@ func InitConfig(configPath string) (*Config, error) {
 // LoadConfig 加载配置文件并返回配置对象
 // 这个函数简化了配置加载过程，默认加载config.yaml
 func LoadConfig() (*Config, error) {
-	cfg, err := InitConfig("./config/config.yaml")
+	cfg, err := InitConfig("config/config.yaml")
 	if err != nil {
 		// 尝试当前目录
 		cfg, err = InitConfig("../../config/config.yaml")
@@ -141,7 +141,6 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-	fmt.Println(cfg)
 	return cfg, nil
 }
 
