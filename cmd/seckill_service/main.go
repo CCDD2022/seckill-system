@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
@@ -33,6 +34,13 @@ func main() {
 	}
 	logger.Info("顺利连接数据库")
 
+	// ✅ 预热Redis连接池（关键！）
+	if err := redis.WarmupRedis(redisDB, 100); err != nil {
+		logger.Warn("Redis预热失败", "err", err)
+	} else {
+		logger.Info("Redis连接池预热完成", "minIdleConns", 100)
+	}
+
 	// 连接RabbitMQ
 	mqConn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/",
 		cfg.MQ.User,
@@ -52,13 +60,9 @@ func main() {
 		if err != nil {
 			logger.Fatal("Failed to open a channel", "err", err)
 		}
-		// ✅ 必须开启发布确认
-		if err := ch.Confirm(false); err != nil {
-			logger.Fatal("Failed to enable confirm mode", "err", err)
-		}
 		// todo 必须开启发布确认
 		if err := ch.Confirm(false); err != nil {
-			logger.Fatal("Failed to enable confirm mode: ","err", err)
+			logger.Fatal("Failed to enable confirm mode: ", "err", err)
 		}
 
 		channels = append(channels, ch)
@@ -122,7 +126,10 @@ func main() {
 	seckillService := service.NewSeckillService(productDao, redisDB, channels)
 
 	// 创建 gRPC 服务器
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.MaxConcurrentStreams(10000),
+		grpc.ConnectionTimeout(10*time.Second),
+	)
 	reflection.Register(grpcServer)
 	seckill.RegisterSeckillServiceServer(grpcServer, seckillService)
 
