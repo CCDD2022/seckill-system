@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
+	redisinit "github.com/CCDD2022/seckill-system/internal/dao/redis"
 	"github.com/CCDD2022/seckill-system/internal/model"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
@@ -36,6 +38,13 @@ func main() {
 	// 创建OrderDao
 	orderDao := dao.NewOrderDao(db)
 
+	// Redis for idempotency
+	rdb, err := redisinit.InitRedis(&cfg.Database.Redis)
+	if err != nil {
+		logger.Error("连接Redis失败: ", "err", err)
+		log.Fatal(err)
+	}
+
 	// 连接RabbitMQ
 	mqConn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/",
 		cfg.MQ.User,
@@ -53,24 +62,30 @@ func main() {
 	}
 	defer mqChannel.Close()
 
-	// 声明队列
+	const exchangeName = "seckill.exchange"
+	if err := mqChannel.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
+		log.Fatalf("Failed to declare exchange: %v", err)
+	}
 	q, err := mqChannel.QueueDeclare(
-		"order.create", // name
-		true,           // durable
-		false,          // delete when unused
-		false,          // exclusive
-		false,          // no-wait
-		nil,            // arguments
+		"orders",
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		log.Fatalf("Failed to declare a queue: %v", err)
 	}
+	if err := mqChannel.QueueBind(q.Name, "order.#", exchangeName, false, nil); err != nil {
+		log.Fatalf("Failed to bind queue: %v", err)
+	}
 
-	// 设置消费者的QoS，一次只处理一条消息
+	// 设置消费者的QoS，允许批量预取
 	err = mqChannel.Qos(
-		1,     // prefetch count
-		0,     // prefetch size
-		false, // global
+		cfg.MQ.ConsumerPrefetch, // prefetch count
+		0,                       // prefetch size
+		false,                   // global
 	)
 	if err != nil {
 		log.Fatalf("Failed to set QoS: %v", err)
@@ -78,13 +93,13 @@ func main() {
 
 	// 开始消费消息
 	msgs, err := mqChannel.Consume(
-		q.Name, // queue
-		"",     // consumer
-		false,  // auto-ack
-		false,  // exclusive
-		false,  // no-local
-		false,  // no-wait
-		nil,    // args
+		q.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
 		log.Fatalf("Failed to register a consumer: %v", err)
@@ -94,40 +109,76 @@ func main() {
 
 	forever := make(chan bool)
 
-	go func() {
-		for d := range msgs {
-			logger.Info("Received a message")
-
-			var msg SeckillMessage
-			err := json.Unmarshal(d.Body, &msg)
-			if err != nil {
-				logger.Error("Failed to unmarshal message: ", "err", err)
-				d.Nack(false, false) // 拒绝消息，不重新入队
-				continue
-			}
-
-			// 创建订单
-			order := &model.Order{
-				UserID:     msg.UserID,
-				ProductID:  msg.ProductID,
-				Quantity:   msg.Quantity,
-				TotalPrice: msg.TotalPrice,
+	// 批处理缓冲
+	type item struct {
+		d   amqp.Delivery
+		msg SeckillMessage
+	}
+	batch := make([]item, 0, cfg.MQ.OrderBatchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		// 反序列化为订单
+		orders := make([]*model.Order, 0, len(batch))
+		for _, it := range batch {
+			orders = append(orders, &model.Order{
+				UserID:     it.msg.UserID,
+				ProductID:  it.msg.ProductID,
+				Quantity:   it.msg.Quantity,
+				TotalPrice: it.msg.TotalPrice,
 				Status:     model.OrderStatusPending,
+			})
+		}
+		ctx := context.Background()
+		if err := orderDao.CreateOrdersBatch(ctx, orders); err != nil {
+			logger.Error("Batch create orders failed", "err", err)
+			// 逐条Nack重新入队（避免丢失）
+			for _, it := range batch {
+				_ = it.d.Nack(false, true)
 			}
-
-			ctx := context.Background()
-			err = orderDao.CreateOrder(ctx, order)
-			if err != nil {
-				logger.Error("Failed to create order: ", "err", err)
-				d.Nack(false, true) // 拒绝消息，重新入队
-				continue
+		} else {
+			for _, it := range batch {
+				_ = it.d.Ack(false)
 			}
+		}
+		batch = batch[:0]
+	}
 
-			logger.Info(fmt.Sprintf("Order created successfully: order_id=%d, user_id=%d, product_id=%d",
-				order.ID, msg.UserID, msg.ProductID))
+	// 定时刷新
+	ticker := time.NewTicker(time.Duration(cfg.MQ.OrderBatchIntervalMs) * time.Millisecond)
+	defer ticker.Stop()
 
-			// 确认消息
-			d.Ack(false)
+	go func() {
+		for {
+			select {
+			case d, ok := <-msgs:
+				if !ok {
+					return
+				}
+				// 幂等：基于MessageId去重
+				if d.MessageId != "" {
+					key := "seckill:msg:done:" + d.MessageId
+					added, _ := rdb.SetNX(context.Background(), key, 1, 30*time.Minute).Result()
+					if !added {
+						_ = d.Ack(false)
+						continue
+					}
+				}
+
+				var m SeckillMessage
+				if err := json.Unmarshal(d.Body, &m); err != nil {
+					logger.Error("Failed to unmarshal message: ", "err", err)
+					_ = d.Nack(false, false)
+					continue
+				}
+				batch = append(batch, item{d: d, msg: m})
+				if len(batch) >= cfg.MQ.OrderBatchSize {
+					flush()
+				}
+			case <-ticker.C:
+				flush()
+			}
 		}
 	}()
 

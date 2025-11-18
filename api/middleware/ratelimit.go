@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/pkg/e"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -77,12 +78,20 @@ func RateLimitMiddleware(r rate.Limit, b int) gin.HandlerFunc {
 }
 
 // SeckillRateLimitMiddleware 秒杀专用限流中间件（更严格）
-func SeckillRateLimitMiddleware() gin.HandlerFunc {
-	// 每个IP每秒最多5个请求，允许10个突发请求
-	return RateLimitMiddleware(5, 10)
+// Config-driven wrappers
+func GlobalRateLimit(cfg *config.Config) gin.HandlerFunc {
+	return RateLimitMiddleware(rate.Limit(cfg.RateLimits.Global.RPS), cfg.RateLimits.Global.Burst)
 }
 
-// CleanupIPRateLimiter 定期清理不活跃的IP限流器
+func SeckillRateLimit(cfg *config.Config) gin.HandlerFunc {
+	return RateLimitMiddleware(rate.Limit(cfg.RateLimits.Seckill.RPS), cfg.RateLimits.Seckill.Burst)
+}
+
+func OrderRateLimit(cfg *config.Config) gin.HandlerFunc {
+	return RateLimitMiddleware(rate.Limit(cfg.RateLimits.Order.RPS), cfg.RateLimits.Order.Burst)
+}
+
+// CleanupStaleIPs 定期清理不活跃的IP限流器
 func (i *IPRateLimiter) CleanupStaleIPs(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

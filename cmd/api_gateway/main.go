@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/CCDD2022/seckill-system/internal/client/grpc"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"github.com/CCDD2022/seckill-system/api/middleware"
@@ -30,8 +32,17 @@ func main() {
 	// 初始化Gin引擎
 	r := gin.Default()
 
-	// 全局限流中间件 (每秒100个请求，允许200个突发)
-	r.Use(middleware.RateLimitMiddleware(100, 200))
+	// CORS 跨域配置
+	r.Use(cors.New(cors.Config{
+		AllowAllOrigins:  true,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
+		AllowCredentials: false,
+	}))
+
+	// 全局限流中间件（配置化）
+	r.Use(middleware.GlobalRateLimit(cfg))
 
 	// 健康检查接口
 	r.GET("/health", func(c *gin.Context) {
@@ -43,7 +54,7 @@ func main() {
 
 	// 初始化gRPC客户端
 	// 在这里 每个client
-	clients, err := v1.InitClients(cfg)
+	clients, err := grpc.InitClients(cfg)
 	if err != nil {
 		logger.Error("Failed to init gRPC clients: ", "err", err)
 	}
@@ -56,30 +67,34 @@ func main() {
 	userHandler := v1.NewUserHandler(clients.UserService)
 	productHandler := v1.NewProductHandler(clients.ProductService)
 	seckillHandler := v1.NewSeckillHandler(clients.SeckillService)
+	orderHandler := v1.NewOrderHandler(clients.OrderService)
 
 	// 定义API路由组
 	api := r.Group("/api/v1")
 	{
 		// 注册认证路由（无需认证）
 		authHandler.RegisterRoutes(api)
+		//seckillHandler.RegisterRoutes(api) // 测试用
 
 		// 受保护的路由组（需要JWT认证）
+		// 用户、商品、订单统一受 JWT 保护
 		protected := api.Group("")
 		protected.Use(middleware.JWTAuthMiddleware(jwtUtil))
 		{
-			// 注册用户路由
-			userHandler.RegisterRoutes(protected)
-			// 注册商品路由
-			productHandler.RegisterRoutes(protected)
+			// 用户路由
+			userHandler.RegisterRoutes(protected.Group("/users"))
+			// 商品路由
+			productHandler.RegisterRoutes(protected.Group("/products"))
+			// 订单路由（独立限流）
+			ordersGroup := protected.Group("/orders")
+			ordersGroup.Use(middleware.OrderRateLimit(cfg))
+			orderHandler.RegisterRoutes(ordersGroup)
 		}
 
-		// 秒杀路由（需要JWT认证 + 更严格的限流）
-		seckillProtected := api.Group("")
-		seckillProtected.Use(middleware.JWTAuthMiddleware(jwtUtil))
-		seckillProtected.Use(middleware.SeckillRateLimitMiddleware())
-		{
-			seckillHandler.RegisterRoutes(seckillProtected)
-		}
+		// 秒杀路由（JWT + 专用限流）
+		seckillGroup := api.Group("/seckill")
+		seckillGroup.Use(middleware.JWTAuthMiddleware(jwtUtil), middleware.SeckillRateLimit(cfg))
+		seckillHandler.RegisterRoutes(seckillGroup)
 	}
 
 	// 启动服务器

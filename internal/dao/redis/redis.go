@@ -10,27 +10,34 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var redisDB *redis.Client
+var redisDB redis.UniversalClient
 
-func InitRedis(cfg *config.RedisConfig) (*redis.Client, error) {
-	redisDB = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Password: cfg.Password,
-		DB:       cfg.DB,
-	})
-	// 设置定时器的任务 用来控制操作的超时时间
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-	defer cancel()
-
-	_, err := redisDB.Ping(ctx).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis连通失败: %w", err)
+// InitRedis initializes redis client for standalone or cluster based on config
+func InitRedis(cfg *config.RedisConfig) (redis.UniversalClient, error) {
+	// Build addresses
+	addrs := cfg.Addrs
+	if len(addrs) == 0 {
+		addrs = []string{fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)}
 	}
 
+	// Universal client handles standalone and cluster transparently
+	uopts := &redis.UniversalOptions{
+		Addrs:    addrs,
+		DB:       cfg.DB,
+		Password: cfg.Password,
+	}
+
+	redisDB = redis.NewUniversalClient(uopts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := redisDB.Ping(ctx).Result(); err != nil {
+		return nil, fmt.Errorf("redis连通失败: %w", err)
+	}
 	return redisDB, nil
 }
 
-func GetRedisDB() *redis.Client {
+func GetRedisDB() redis.UniversalClient {
 	return redisDB
 }

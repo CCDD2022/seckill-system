@@ -1,0 +1,24 @@
+{
+  "attack": {
+    "duration": "30s",
+    "rate_rps": 200,
+    "users": 50
+  },
+  "logical_success": 0,
+  "logical_success_ratio": 0,
+  "logical_total": 6000,
+  "timestamp": "2025-11-17T23:16:32+08:00",
+  "vegeta_metrics": {
+    "errors": [
+      "429 Too Many Requests",
+      "500 Internal Server Error"
+    ],
+    "latency_mean_ms": 28.4248,
+    "latency_p95_ms": 0.5602959999999999,
+    "latency_p99_ms": 3.1992380000000002,
+    "rate": 200.0303606081331,
+    "requests": 6000,
+    "success_ratio_http": 0.020833333333333332,
+    "throughput": 3.697568850847012
+  }
+}

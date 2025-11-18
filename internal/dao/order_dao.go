@@ -2,6 +2,7 @@ package dao
 
 import (
 	"context"
+	"errors"
 
 	"github.com/CCDD2022/seckill-system/internal/model"
 	"gorm.io/gorm"
@@ -17,9 +18,19 @@ func NewOrderDao(db *gorm.DB) *OrderDao {
 	}
 }
 
+var ErrOrderStatusChanged = errors.New("订单状态已变更")
+
 // CreateOrder 创建订单
 func (d *OrderDao) CreateOrder(ctx context.Context, order *model.Order) error {
 	return d.db.WithContext(ctx).Create(order).Error
+}
+
+// CreateOrdersBatch 批量创建订单（单事务）
+func (d *OrderDao) CreateOrdersBatch(ctx context.Context, orders []*model.Order) error {
+	if len(orders) == 0 {
+		return nil
+	}
+	return d.db.WithContext(ctx).CreateInBatches(orders, len(orders)).Error
 }
 
 // GetOrderByID 根据ID获取订单
@@ -36,7 +47,6 @@ func (d *OrderDao) GetOrderByID(ctx context.Context, orderID int64) (*model.Orde
 func (d *OrderDao) GetUserOrders(ctx context.Context, userID int64, page, pageSize int32) ([]*model.Order, int64, error) {
 	var orders []*model.Order
 	var total int64
-
 	offset := (page - 1) * pageSize
 
 	// 获取总数
@@ -62,7 +72,23 @@ func (d *OrderDao) UpdateOrderStatus(ctx context.Context, orderID int64, status 
 
 // CancelOrder 取消订单
 func (d *OrderDao) CancelOrder(ctx context.Context, orderID, userID int64) error {
+	result := d.db.WithContext(ctx).Model(&model.Order{}).
+		Where("id = ? AND user_id = ? AND status = ? ", orderID, userID, model.OrderStatusPending).
+		Update("status", model.OrderStatusCancelled)
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return ErrOrderStatusChanged
+	}
+	return nil
+}
+
+// PayOrder 支付订单（仅允许待支付 -> 已支付）
+func (d *OrderDao) PayOrder(ctx context.Context, orderID, userID int64) error {
 	return d.db.WithContext(ctx).Model(&model.Order{}).
 		Where("id = ? AND user_id = ? AND status = ?", orderID, userID, model.OrderStatusPending).
-		Update("status", model.OrderStatusCancelled).Error
+		Update("status", model.OrderStatusPaid).Error
 }

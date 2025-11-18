@@ -1,7 +1,7 @@
 # 服务器配置 (Docker环境)
 server:
   port: 8080
-  mode: release  # debug, release, test
+  mode: release # debug, release, test
   read_timeout: 60
   write_timeout: 60
 
@@ -9,34 +9,34 @@ server:
 log:
   level: info
   format: json
-  output: console  # 在Docker中输出到控制台
+  output: console # 在Docker中输出到控制台
   file_path: ./logs/app.log
-  max_size: 100    # MB
+  max_size: 100 # MB
   max_backups: 3
-  max_age: 30      # days
+  max_age: 30 # days
 
 # 服务配置（使用容器名称）
 services:
   api_gateway:
     host: 0.0.0.0
     port: 8080
-  
+
   user_service:
     host: user-service
     port: 50051
-  
+
   product_service:
     host: product-service
     port: 50052
-  
+
   auth_service:
     host: auth-service
     port: 50053
-  
+
   seckill_service:
     host: seckill-service
     port: 50054
-  
+
   order_service:
     host: order-service
     port: 50055
@@ -49,14 +49,20 @@ database:
     user: root
     password: root123
     dbname: seckill_shop
-    max_open_conns: 100
-    max_idle_conns: 10
-  
+    max_open_conns: 400
+    max_idle_conns: 100
+
   redis:
-    host: redis
-    port: 6379
+    mode: cluster
     password: ""
     db: 0
+    addrs:
+      - redis-node-1:6379
+      - redis-node-2:6379
+      - redis-node-3:6379
+      - redis-node-4:6379
+      - redis-node-5:6379
+      - redis-node-6:6379
 
 # JWT配置
 jwt:
@@ -69,3 +75,18 @@ mq:
   port: 5672
   user: guest
   password: guest
+  channel_pool_size: 32
+  consumer_prefetch: 1000
+  order_batch_size: 500
+  order_batch_interval_ms: 80
+
+rate_limits:
+  global:
+    rps: 20000
+    burst: 40000
+  seckill:
+    rps: 5000
+    burst: 10000
+  order:
+    rps: 8000
+    burst: 16000

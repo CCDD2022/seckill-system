@@ -22,25 +22,20 @@ service ProductService {
 
 
 message Product {
-  enum Status{
-    NOT_STARTED =0;
-    ACTIVE = 1;
-    ENDED = 2;
-  }
   int64 id = 1;
   string name = 2;
   string description = 3;
   double price = 4;
   int32 stock = 5;
   string image_url = 6;
-  string seckill_start_time = 7;  // 秒杀开始时间
-  string seckill_end_time = 8;    // 秒杀结束时间
-  Status seckill_status = 10;     // not_started, active, ended
+  int64 seckill_start_time = 7;  // 秒杀开始时间 (unix秒)
+  int64 seckill_end_time = 8;    // 秒杀结束时间 (unix秒)
+  // reserved field number 10 (旧 seckill_status)
   int64 seconds_until_start = 11; // 距离开始秒数（未开始时）
   int64 seconds_until_end = 12;   // 距离结束秒数（进行中）
 
-  string created_at = 13;
-  string updated_at = 14;
+  int64 created_at = 13; // 创建时间 (unix秒)
+  int64 updated_at = 14; // 更新时间 (unix秒)
 }
 
 message GetProductRequest {
@@ -56,6 +51,9 @@ message GetProductResponse {
 message ListProductsRequest {
   int32 page = 1;
   int32 page_size = 2;
+  // 状态筛选：-1 全部；0 未开始；1 进行中；2 已结束
+  int32 status = 3;
+  
 }
 
 message ListProductsResponse {
@@ -72,8 +70,8 @@ message CreateProductRequest {
   double price = 3;
   int32 stock = 4;
   string image_url = 5;
-  string seckill_start_time = 6;  // 新增：秒杀开始时间（必需）
-  string seckill_end_time = 7;    // 新增：秒杀结束时间（必需）
+  int64 seckill_start_time = 6;  // 秒杀开始时间 unix秒
+  int64 seckill_end_time = 7;    // 秒杀结束时间 unix秒
 }
 
 message CreateProductResponse {
@@ -89,8 +87,8 @@ message UpdateProductRequest {
   double price = 4;
   int32 stock = 5;
   string image_url = 6;
-  string seckill_start_time = 7;  // 新增：可以更新秒杀时间
-  string seckill_end_time = 8;    // 新增：可以更新秒杀时间
+  int64 seckill_start_time = 7;  // 更新：秒杀开始时间 unix秒
+  int64 seckill_end_time = 8;    // 更新：秒杀结束时间 unix秒
 }
 
 message UpdateProductResponse {

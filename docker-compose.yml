@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # MySQL数据库
@@ -18,27 +18,144 @@ services:
     networks:
       - seckill-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot123"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-proot123",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Redis缓存
-  redis:
+  # Redis Cluster 3主3从 (示例) 端口映射 7001-7006
+  redis-node-1:
     image: redis:7-alpine
-    container_name: seckill-redis
+    container_name: redis-node-1
     ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - seckill-network
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "7001:6379"
+    command:
+      [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--appendonly",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+      ]
+    networks: [seckill-network]
+  redis-node-2:
+    image: redis:7-alpine
+    container_name: redis-node-2
+    ports:
+      - "7002:6379"
+    command:
+      [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--appendonly",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+      ]
+    networks: [seckill-network]
+  redis-node-3:
+    image: redis:7-alpine
+    container_name: redis-node-3
+    ports:
+      - "7003:6379"
+    command:
+      [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--appendonly",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+      ]
+    networks: [seckill-network]
+  redis-node-4:
+    image: redis:7-alpine
+    container_name: redis-node-4
+    ports:
+      - "7004:6379"
+    command:
+      [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--appendonly",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+      ]
+    networks: [seckill-network]
+  redis-node-5:
+    image: redis:7-alpine
+    container_name: redis-node-5
+    ports:
+      - "7005:6379"
+    command:
+      [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--appendonly",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+      ]
+    networks: [seckill-network]
+  redis-node-6:
+    image: redis:7-alpine
+    container_name: redis-node-6
+    ports:
+      - "7006:6379"
+    command:
+      [
+        "redis-server",
+        "--cluster-enabled",
+        "yes",
+        "--appendonly",
+        "yes",
+        "--cluster-config-file",
+        "nodes.conf",
+        "--cluster-node-timeout",
+        "5000",
+      ]
+    networks: [seckill-network]
+
+  # 初始化集群 (一次性) --cluster-replicas 1
+  redis-cluster-init:
+    image: redis:7-alpine
+    container_name: redis-cluster-init
+    depends_on:
+      - redis-node-1
+      - redis-node-2
+      - redis-node-3
+      - redis-node-4
+      - redis-node-5
+      - redis-node-6
+    command: sh -c "sleep 3 && echo 'yes' | redis-cli --cluster create redis-node-1:6379 redis-node-2:6379 redis-node-3:6379 redis-node-4:6379 redis-node-5:6379 redis-node-6:6379 --cluster-replicas 1 && tail -f /dev/null"
+    networks: [seckill-network]
 
   # RabbitMQ消息队列
   rabbitmq:
@@ -113,8 +230,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      redis-cluster-init:
+        condition: service_started
     networks:
       - seckill-network
     restart: unless-stopped
@@ -134,8 +251,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      redis-cluster-init:
+        condition: service_started
       rabbitmq:
         condition: service_healthy
     networks:
@@ -157,6 +274,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis-cluster-init:
+        condition: service_started
     networks:
       - seckill-network
     restart: unless-stopped

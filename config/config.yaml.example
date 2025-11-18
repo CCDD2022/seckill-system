@@ -41,7 +41,7 @@ services:
     host: localhost
     port: 50055
 
-# 数据库配置
+# 数据库配置 (Redis 专用使用集群模式)
 database:
   mysql:
     host: localhost
@@ -49,23 +49,45 @@ database:
     user: root
     password: your_password_here
     dbname: seckill_shop
-    max_open_conns: 100
-    max_idle_conns: 10
-  
+    max_open_conns: 200
+    max_idle_conns: 50
+
   redis:
-    host: localhost
-    port: 6379
-    password: ""
-    db: 0
+    mode: cluster
+    password: ""          # 若有密码统一配置
+    db: 0                  # cluster 中通常忽略 DB, 仍保留字段便于兼容
+    addrs:                 # 3 主 3 从 示例 (请按实际集群调整)
+      - 127.0.0.1:7001
+      - 127.0.0.1:7002
+      - 127.0.0.1:7003
+      - 127.0.0.1:7004
+      - 127.0.0.1:7005
+      - 127.0.0.1:7006
 
 # JWT配置
 jwt:
   secret: "your-secret-key-change-in-production"
   expire_hours: 72
 
-# RabbitMQ配置
+# RabbitMQ配置 + 批处理参数 / 消费预取
 mq:
   host: localhost
   port: 5672
   user: guest
   password: guest
+  channel_pool_size: 32
+  consumer_prefetch: 1000
+  order_batch_size: 200
+  order_batch_interval_ms: 100
+
+# 限流 (可按压测/生产调整)
+rate_limits:
+  global:
+    rps: 10000
+    burst: 20000
+  seckill:
+    rps: 3000
+    burst: 6000
+  order:
+    rps: 5000
+    burst: 10000

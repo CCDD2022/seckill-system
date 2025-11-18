@@ -45,23 +45,64 @@ func main() {
 	}
 	defer mqConn.Close()
 
-	mqChannel, err := mqConn.Channel()
-	if err != nil {
-		log.Fatalf("Failed to open a channel: %v", err)
+	// 创建通道池
+	poolSize := cfg.MQ.ChannelPoolSize
+	channels := make([]*amqp.Channel, 0, poolSize)
+	for i := 0; i < poolSize; i++ {
+		ch, err := mqConn.Channel()
+		if err != nil {
+			log.Fatalf("Failed to open a channel: %v", err)
+		}
+		channels = append(channels, ch)
 	}
-	defer mqChannel.Close()
+	defer func() {
+		for _, ch := range channels {
+			_ = ch.Close()
+		}
+	}()
 
-	// 声明队列
-	_, err = mqChannel.QueueDeclare(
-		"order.create", // name
-		true,           // durable
-		false,          // delete when unused
-		false,          // exclusive
-		false,          // no-wait
-		nil,            // arguments
+	// 声明 Topic Exchange 和相关队列/绑定（幂等）
+	const exchangeName = "seckill.exchange"
+	if err := channels[0].ExchangeDeclare(
+		exchangeName,
+		"topic",
+		true,  // durable
+		false, // auto-deleted
+		false, // internal
+		false, // no-wait
+		nil,
+	); err != nil {
+		log.Fatalf("Failed to declare exchange: %v", err)
+	}
+
+	ordersQ, err := channels[0].QueueDeclare(
+		"orders",
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	if err != nil {
-		log.Fatalf("Failed to declare a queue: %v", err)
+		log.Fatalf("Failed to declare orders queue: %v", err)
+	}
+	if err := channels[0].QueueBind(ordersQ.Name, "order.#", exchangeName, false, nil); err != nil {
+		log.Fatalf("Failed to bind orders queue: %v", err)
+	}
+
+	stockLogQ, err := channels[0].QueueDeclare(
+		"stock_log",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare stock_log queue: %v", err)
+	}
+	if err := channels[0].QueueBind(stockLogQ.Name, "stock.#", exchangeName, false, nil); err != nil {
+		log.Fatalf("Failed to bind stock_log queue: %v", err)
 	}
 
 	logger.Info("RabbitMQ connected")
@@ -69,8 +110,8 @@ func main() {
 	// 创建ProductDao
 	productDao := dao.NewProductDao(db, redisDB)
 
-	// 创建 Seckill Service
-	seckillService := service.NewSeckillService(productDao, redisDB, mqChannel)
+	// 创建 Seckill Service（传入通道池）
+	seckillService := service.NewSeckillService(productDao, redisDB, channels)
 
 	// 创建 gRPC 服务器
 	grpcServer := grpc.NewServer()

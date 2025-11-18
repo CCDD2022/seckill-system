@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
@@ -41,8 +40,15 @@ func (s *ProductService) GetProduct(ctx context.Context, request *product.GetPro
 		Price:       productInfo.Price,
 		Stock:       productInfo.Stock,
 		ImageUrl:    productInfo.ImageURL,
-		CreatedAt:   productInfo.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   productInfo.UpdatedAt.Format(time.RFC3339),
+		CreatedAt:   productInfo.CreatedAt.Unix(),
+		UpdatedAt:   productInfo.UpdatedAt.Unix(),
+	}
+
+	if productInfo.SeckillStartTime != nil {
+		productRes.SeckillStartTime = productInfo.SeckillStartTime.Unix()
+	}
+	if productInfo.SeckillEndTime != nil {
+		productRes.SeckillEndTime = productInfo.SeckillEndTime.Unix()
 	}
 
 	return &product.GetProductResponse{
@@ -54,13 +60,23 @@ func (s *ProductService) GetProduct(ctx context.Context, request *product.GetPro
 
 // CreateProduct 创建商品
 func (s *ProductService) CreateProduct(ctx context.Context, request *product.CreateProductRequest) (*product.CreateProductResponse, error) {
-	// 构建商品模型
+	var startTimePtr, endTimePtr *time.Time
+	if request.SeckillStartTime > 0 {
+		st := time.Unix(request.SeckillStartTime, 0)
+		startTimePtr = &st
+	}
+	if request.SeckillEndTime > 0 {
+		et := time.Unix(request.SeckillEndTime, 0)
+		endTimePtr = &et
+	}
 	productModel := &model.Product{
-		Name:        request.Name,
-		Description: request.Description,
-		Price:       request.Price,
-		Stock:       request.Stock,
-		ImageURL:    request.ImageUrl,
+		Name:             request.Name,
+		Description:      request.Description,
+		Price:            request.Price,
+		Stock:            request.Stock,
+		ImageURL:         request.ImageUrl,
+		SeckillStartTime: startTimePtr,
+		SeckillEndTime:   endTimePtr,
 	}
 
 	// 创建商品
@@ -72,14 +88,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, request *product.Cre
 		}, err
 	}
 
-	// 清理列表缓存（异步，不阻塞主流程）
-	go func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if err := s.productDao.ClearListCache(cleanupCtx); err != nil {
-			log.Printf("清理列表缓存失败: %v", err)
-		}
-	}()
+	// 列表缓存已弃用，不再清理
 
 	return &product.CreateProductResponse{
 		Code:      e.SUCCESS,
@@ -100,6 +109,16 @@ func (s *ProductService) UpdateProduct(ctx context.Context, request *product.Upd
 		}, nil
 	}
 
+	var startTime, endTime *time.Time
+	if request.SeckillStartTime > 0 {
+		st := time.Unix(request.SeckillStartTime, 0)
+		startTime = &st
+	}
+	if request.SeckillEndTime > 0 {
+		et := time.Unix(request.SeckillEndTime, 0)
+		endTime = &et
+	}
+
 	// 构建更新字段
 	updates := make(map[string]interface{})
 	if request.Name != "" {
@@ -117,6 +136,13 @@ func (s *ProductService) UpdateProduct(ctx context.Context, request *product.Upd
 	if request.ImageUrl != "" {
 		updates["image_url"] = request.ImageUrl
 	}
+	if startTime != nil {
+		updates["seckill_start_time"] = *startTime
+	}
+	if endTime != nil {
+		updates["seckill_end_time"] = *endTime
+	}
+	// 旧字符串判断移除（现为int64）
 
 	// 如果没有需要更新的字段，返回错误
 	if len(updates) == 0 {
@@ -136,14 +162,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, request *product.Upd
 		}, err
 	}
 
-	// 清理缓存（异步）
+	// 清理商品详情缓存（列表缓存已弃用）
 	go func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		s.productDao.ClearProductCache(cleanupCtx, request.ProductId)
-		if err := s.productDao.ClearListCache(context.Background()); err != nil {
-			log.Printf("清理列表缓存失败: %v", err)
-		}
 	}()
 
 	return &product.UpdateProductResponse{
@@ -174,14 +197,11 @@ func (s *ProductService) DeleteProduct(ctx context.Context, request *product.Del
 		}, err
 	}
 
-	// 清理缓存（异步）
+	// 清理商品详情缓存（列表缓存已弃用）
 	go func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		s.productDao.ClearProductCache(cleanupCtx, request.ProductId)
-		if err := s.productDao.ClearListCache(cleanupCtx); err != nil {
-			log.Printf("清理列表缓存失败: %v", err)
-		}
 	}()
 
 	return &product.DeleteProductResponse{
@@ -194,59 +214,38 @@ func (s *ProductService) DeleteProduct(ctx context.Context, request *product.Del
 func (s *ProductService) ListProducts(ctx context.Context, request *product.ListProductsRequest) (*product.ListProductsResponse, error) {
 	// 计算偏移量
 	offset := (request.Page - 1) * request.PageSize
-
-	// 尝试从缓存获取
-	cacheKey := dao.GetListCacheKey(request.Page, request.PageSize)
-	cachedProducts, cachedTotal, err := s.productDao.GetProductsFromCache(ctx, cacheKey)
-	if err == nil {
-		// 缓存命中
-		return s.buildListResponse(cachedProducts, cachedTotal, e.SUCCESS), nil
-	}
-
-	// 缓存未命中，查询数据库
-	total, err := s.productDao.GetTotalProducts(ctx)
+	// 直接从数据库读取，支持状态筛选（-1 全部）
+	products, total, err := s.productDao.ListProductsFromDBWithStatus(ctx, offset, request.PageSize, request.Status)
 	if err != nil {
-		return &product.ListProductsResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return &product.ListProductsResponse{Code: e.ERROR, Message: e.GetMsg(e.ERROR)}, err
 	}
-
-	// 检查是否超出数据范围（业务逻辑，返回nil error）
-	if int64(offset) >= total {
-		return s.buildListResponse([]*model.Product{}, total, e.ERROR_PRODUCT_NOT_EXISTS), nil
+	if int64(offset) >= int64(total) {
+		return s.buildListResponse([]*model.Product{}, int64(total), e.SUCCESS), nil
 	}
-
-	// 查询分页数据
-	products, err := s.productDao.ListProductsFromDB(ctx, offset, request.PageSize)
-	if err != nil {
-		// 数据库查询失败是系统错误
-		return &product.ListProductsResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
-	}
-
-	// 异步更新缓存
-	go s.updateCache(context.Background(), cacheKey, products, total)
-
-	return s.buildListResponse(products, total, e.SUCCESS), nil
+	return s.buildListResponse(products, int64(total), e.SUCCESS), nil
 }
 
 // buildListResponse 构建列表响应
 func (s *ProductService) buildListResponse(products []*model.Product, total int64, code int) *product.ListProductsResponse {
 	var productList []*product.Product
 	for _, p := range products {
-		productList = append(productList, &product.Product{
+		item := &product.Product{
 			Id:          p.ID,
 			Name:        p.Name,
 			Description: p.Description,
 			Price:       p.Price,
 			Stock:       p.Stock,
 			ImageUrl:    p.ImageURL,
-			CreatedAt:   p.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   p.UpdatedAt.Format(time.RFC3339),
-		})
+			CreatedAt:   p.CreatedAt.Unix(),
+			UpdatedAt:   p.UpdatedAt.Unix(),
+		}
+		if p.SeckillStartTime != nil {
+			item.SeckillStartTime = p.SeckillStartTime.Unix()
+		}
+		if p.SeckillEndTime != nil {
+			item.SeckillEndTime = p.SeckillEndTime.Unix()
+		}
+		productList = append(productList, item)
 	}
 
 	return &product.ListProductsResponse{
@@ -258,14 +257,4 @@ func (s *ProductService) buildListResponse(products []*model.Product, total int6
 }
 
 // updateCache 异步更新缓存
-func (s *ProductService) updateCache(ctx context.Context, cacheKey string, products []*model.Product, total int64) {
-	type listCache struct {
-		Products []*model.Product `json:"products"`
-		Total    int64            `json:"total"`
-	}
-	response := listCache{Products: products, Total: total}
-
-	if err := s.productDao.SetProductsToCache(ctx, cacheKey, response.Products, response.Total); err != nil {
-		log.Printf("更新缓存失败: %v", err)
-	}
-}
+// 移除缓存更新逻辑：按需求直接访问数据库

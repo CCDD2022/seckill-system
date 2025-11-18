@@ -10,6 +10,8 @@ import (
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/CCDD2022/seckill-system/proto_output/auth"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -33,6 +35,11 @@ func main() {
 	reflection.Register(grpcServer)
 	// 当收到auth.authService/Register的时候  调用authService.Register方法
 	auth.RegisterAuthServiceServer(grpcServer, authService)
+
+	// 创建健康检查实例并注册到gRPC服务器上
+	healthServer := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
+	healthServer.SetServingStatus("auth", grpc_health_v1.HealthCheckResponse_SERVING)
 
 	// 启动 gRPC 服务器
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Services.AuthService.Host, cfg.Services.AuthService.Port))

@@ -38,7 +38,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	// ✅ 调用auth.AuthServiceClient的Login方法
+	//  调用auth.AuthServiceClient的Login方法
 	resp, err := h.authClient.Login(ctx, &req)
 	if err != nil {
 		st, _ := status.FromError(err)
@@ -49,7 +49,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// ✅ 使用getter方法访问字段
+	//  使用getter方法访问字段
 	if resp.GetCode() != e.SUCCESS {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    resp.GetCode(),

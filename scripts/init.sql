@@ -53,10 +53,10 @@ CREATE TABLE IF NOT EXISTS `orders` (
 
 -- 插入测试数据
 -- 插入测试用户
-INSERT INTO `users` (`username`, `password_hash`, `email`, `phone`, `status`, `is_seckill_allowed`) VALUES
-('testuser1', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'test1@example.com', '13800138001', 0, TRUE),
-('testuser2', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'test2@example.com', '13800138002', 0, TRUE),
-('testuser3', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'test3@example.com', '13800138003', 0, TRUE);
+INSERT INTO `users` (`username`, `password_hash`, `email`, `phone` ) VALUES
+('testuser1', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'test1@example.com', '13800138001'),
+('testuser2', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'test2@example.com', '13800138002'),
+('testuser3', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'test3@example.com', '13800138003');
 
 -- 插入测试商品（秒杀商品）
 INSERT INTO `products` (`name`, `description`, `price`, `stock`, `image_url`) VALUES

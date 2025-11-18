@@ -9,8 +9,8 @@ message User {
   string username = 2;
   string email = 3;
   string phone = 4;
-  string created_at = 5;
-  string updated_at = 6;
+  int64 created_at = 5; // unix秒
+  int64 updated_at = 6; // unix秒
 }
 
 // AuthService: 只负责认证相关操作

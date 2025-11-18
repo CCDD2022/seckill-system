@@ -42,3 +42,5 @@ temp/
 
 # Build artifacts
 /dist/
+
+/proto_output

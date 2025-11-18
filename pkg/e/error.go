@@ -19,6 +19,8 @@ const (
 	ERROR_STOCK_NOT_ENOUGH   = 30002
 
 	ERROR_NOT_EXIST = 40001
+
+	ERROR_ORDER_STATUS_CHANGED = 50001
 )
 
 var msgFlags = map[int]string{
@@ -38,7 +40,8 @@ var msgFlags = map[int]string{
 	ERROR_PRODUCT_NOT_EXISTS: "商品不存在",
 	ERROR_STOCK_NOT_ENOUGH:   "库存不足",
 
-	ERROR_NOT_EXIST: "资源不存在",
+	ERROR_NOT_EXIST:            "资源不存在",
+	ERROR_ORDER_STATUS_CHANGED: "订单状态已变更",
 }
 
 func GetMsg(code int) string {

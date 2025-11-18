@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/pkg/e"
@@ -50,8 +49,8 @@ func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*u
 			Username:  userInfo.Username,
 			Email:     userInfo.Email,
 			Phone:     userInfo.Phone,
-			CreatedAt: userInfo.CreatedAt.Format(time.RFC3339),
-			UpdatedAt: userInfo.UpdatedAt.Format(time.RFC3339),
+			CreatedAt: userInfo.CreatedAt.Unix(),
+			UpdatedAt: userInfo.UpdatedAt.Unix(),
 		},
 	}, nil
 }
@@ -107,8 +106,8 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 			Username:  updatedUser.Username, // 保持不变
 			Email:     updatedUser.Email,
 			Phone:     updatedUser.Phone,
-			CreatedAt: updatedUser.CreatedAt.Format(time.RFC3339),
-			UpdatedAt: updatedUser.UpdatedAt.Format(time.RFC3339),
+			CreatedAt: updatedUser.CreatedAt.Unix(),
+			UpdatedAt: updatedUser.UpdatedAt.Unix(),
 		},
 	}, nil
 }
