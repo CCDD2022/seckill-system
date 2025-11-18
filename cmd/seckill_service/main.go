@@ -58,7 +58,7 @@ func main() {
 		}
 		// todo 必须开启发布确认
 		if err := ch.Confirm(false); err != nil {
-			log.Fatalf("Failed to enable confirm mode: %v", err)
+			logger.Fatal("Failed to enable confirm mode: ","err", err)
 		}
 
 		channels = append(channels, ch)
