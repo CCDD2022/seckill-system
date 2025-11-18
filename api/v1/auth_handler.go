@@ -58,7 +58,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, auth.LoginResponse{
+	JSONProto(c, http.StatusOK, &auth.LoginResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 		Token:   resp.GetToken(),
@@ -98,10 +98,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    resp.GetCode(),
-		"message": resp.GetMessage(),
-		"User":    resp.GetUser(),
+	JSONProto(c, http.StatusOK, &auth.RegisterResponse{
+		Code:    resp.GetCode(),
+		Message: resp.GetMessage(),
+		User:    resp.GetUser(),
 	})
 }
 
