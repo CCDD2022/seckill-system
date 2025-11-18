@@ -47,3 +47,5 @@ temp/
 
 
 *.md
+
+!README.md
