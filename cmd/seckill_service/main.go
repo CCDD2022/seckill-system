@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
@@ -41,7 +40,7 @@ func main() {
 		cfg.MQ.Host,
 		cfg.MQ.Port))
 	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		logger.Fatal("Failed to connect to RabbitMQ", "err", err)
 	}
 	defer mqConn.Close()
 
@@ -51,8 +50,13 @@ func main() {
 	for i := 0; i < poolSize; i++ {
 		ch, err := mqConn.Channel()
 		if err != nil {
-			log.Fatalf("Failed to open a channel: %v", err)
+			logger.Fatal("Failed to open a channel", "err", err)
 		}
+		// ✅ 必须开启发布确认
+		if err := ch.Confirm(false); err != nil {
+			logger.Fatal("Failed to enable confirm mode", "err", err)
+		}
+
 		channels = append(channels, ch)
 	}
 	defer func() {
@@ -72,7 +76,7 @@ func main() {
 		false, // no-wait
 		nil,
 	); err != nil {
-		log.Fatalf("Failed to declare exchange: %v", err)
+		logger.Fatal("Failed to declare exchange", "err", err)
 	}
 
 	ordersQ, err := channels[0].QueueDeclare(
@@ -84,10 +88,10 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		log.Fatalf("Failed to declare orders queue: %v", err)
+		logger.Fatal("Failed to declare orders queue", "err", err)
 	}
 	if err := channels[0].QueueBind(ordersQ.Name, "order.#", exchangeName, false, nil); err != nil {
-		log.Fatalf("Failed to bind orders queue: %v", err)
+		logger.Fatal("Failed to bind orders queue", "err", err)
 	}
 
 	stockLogQ, err := channels[0].QueueDeclare(
@@ -99,10 +103,10 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		log.Fatalf("Failed to declare stock_log queue: %v", err)
+		logger.Fatal("Failed to declare stock_log queue", "err", err)
 	}
 	if err := channels[0].QueueBind(stockLogQ.Name, "stock.#", exchangeName, false, nil); err != nil {
-		log.Fatalf("Failed to bind stock_log queue: %v", err)
+		logger.Fatal("Failed to bind stock_log queue", "err", err)
 	}
 
 	logger.Info("RabbitMQ connected")

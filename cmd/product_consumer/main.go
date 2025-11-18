@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
@@ -36,42 +35,35 @@ func main() {
 
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
-		logger.Error("连接Mysql数据库失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接Mysql数据库失败", "err", err)
 	}
 	rdb, err := rds.InitRedis(&cfg.Database.Redis)
 	if err != nil {
-		logger.Error("连接Redis失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接Redis失败", "err", err)
 	}
 	productDao := dao.NewProductDao(db, rdb)
 
 	mqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.MQ.User, cfg.MQ.Password, cfg.MQ.Host, cfg.MQ.Port)
 	mqConn, err := amqp.Dial(mqURL)
 	if err != nil {
-		logger.Error("连接RabbitMQ失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接RabbitMQ失败", "err", err)
 	}
 	defer mqConn.Close()
 	ch, err := mqConn.Channel()
 	if err != nil {
-		logger.Error("打开RabbitMQ通道失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("打开RabbitMQ通道失败", "err", err)
 	}
 	defer ch.Close()
 	q, err := ch.QueueDeclare(queueOrderCanceled, true, false, false, false, nil)
 	if err != nil {
-		logger.Error("声明队列失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("声明队列失败", "err", err)
 	}
 	if err := ch.Qos(1, 0, false); err != nil {
-		logger.Error("设置QoS失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("设置QoS失败", "err", err)
 	}
 	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
 	if err != nil {
-		logger.Error("注册消费者失败", "err", err)
-		log.Fatal(err)
+		logger.Fatal("注册消费者失败", "err", err)
 	}
 
 	logger.Info("Product Consumer started, waiting for order.canceled events...")

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"strconv"
 	"time"
 
@@ -28,15 +27,13 @@ func main() {
 	// DB
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
-		logger.Error("连接Mysql数据库失败: ", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接Mysql数据库失败", "err", err)
 	}
 
 	// Redis
 	rdb, err := redisinit.InitRedis(&cfg.Database.Redis)
 	if err != nil {
-		logger.Error("连接Redis失败: ", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接Redis失败", "err", err)
 	}
 
 	logger.Info("Stock Reconciler started")

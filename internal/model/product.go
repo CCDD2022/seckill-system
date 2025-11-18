@@ -20,8 +20,8 @@ type Product struct {
 	Price             float64    `gorm:"type:decimal(10,2);not null" json:"price"`
 	Stock             int32      `gorm:"not null;default:0" json:"stock"`
 	ImageURL          string     `gorm:"size:255" json:"image_url"`
-	SeckillStartTime  *time.Time `gorm:"index" json:"seckill_start_time"` // 秒杀开始时间（可为空，表示非秒杀商品）
-	SeckillEndTime    *time.Time `gorm:"index" json:"seckill_end_time"`   // 秒杀结束时间（可为空）
+	SeckillStartTime  *time.Time `gorm:"index" json:"seckill_start_time"`
+	SeckillEndTime    *time.Time `gorm:"index" json:"seckill_end_time"`
 	SecondsUntilStart int64      `gorm:"-" json:"seconds_until_start"`
 	SecondsUntilEnd   int64      `gorm:"-" json:"seconds_until_end"`
 	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`

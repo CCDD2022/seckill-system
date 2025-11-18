@@ -1,33 +1,30 @@
 package logger
 
+// 恢复文件日志能力：使用 slog + lumberjack，实现按配置输出到文件或 stdout。
+// 保留原有简单调用接口 (Info/Warn/Error 等)，减少侵入性修改。
+
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 
-	"github.com/CCDD2022/seckill-system/config" // 根据你的实际模块名调整
-
+	"github.com/CCDD2022/seckill-system/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// Logger 包装 slog.Logger，提供便捷方法
-type Logger struct {
-	*slog.Logger
-}
+var base *slog.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
-var logger *Logger
-
-// InitLogger 初始化全局日志实例
+// InitLogger 根据配置初始化全局 logger。
 func InitLogger(cfg *config.Logger) error {
-	var (
-		handler slog.Handler
-		level   slog.Level
-		writer  io.Writer
-	)
+	if cfg == nil {
+		return errors.New("nil logger config")
+	}
 
-	// 1. 解析日志级别
+	// 解析级别
+	var level slog.Level
 	switch cfg.Level {
 	case "debug":
 		level = slog.LevelDebug
@@ -41,104 +38,65 @@ func InitLogger(cfg *config.Logger) error {
 		level = slog.LevelInfo
 	}
 
-	// 2. 设置输出目标
-	switch cfg.Output {
-	case "file":
-		// 确保日志目录存在
-		logDir := filepath.Dir(cfg.FilePath)
-		if err := os.MkdirAll(logDir, 0755); err != nil {
+	// 输出 writer
+	var writer io.Writer = os.Stdout
+	if cfg.Output == "file" {
+		dir := filepath.Dir(cfg.FilePath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
-
 		writer = &lumberjack.Logger{
 			Filename:   cfg.FilePath,
 			MaxSize:    cfg.MaxSize,
 			MaxBackups: cfg.MaxBackups,
 			MaxAge:     cfg.MaxAge,
-			Compress:   true, // 压缩旧日志
+			Compress:   true,
 		}
-	case "stdout":
-		writer = os.Stdout
-	default:
-		writer = os.Stdout
 	}
 
-	// 3. 创建 Handler
-	opts := &slog.HandlerOptions{
-		Level: level,
-		// 添加 source 信息（源文件和行号）
-		AddSource: cfg.Level == "debug",
-	}
-
+	opts := &slog.HandlerOptions{Level: level, AddSource: cfg.Level == "debug"}
+	var handler slog.Handler
 	switch cfg.Format {
 	case "json":
 		handler = slog.NewJSONHandler(writer, opts)
-	case "text":
+	default: // text 或未知
 		handler = slog.NewTextHandler(writer, opts)
-	default:
-		handler = slog.NewJSONHandler(writer, opts)
 	}
 
-	// 4. 创建全局 logger
-	logger = &Logger{
-		Logger: slog.New(handler),
-	}
-
-	Info("Logger initialized successfully", "config", cfg)
+	base = slog.New(handler)
+	base.Info("logger initialized", "level", cfg.Level, "format", cfg.Format, "output", cfg.Output, "file", cfg.FilePath)
 	return nil
 }
 
-// GetLogger 获取全局 logger 实例
-func GetLogger() *Logger {
-	if logger == nil {
-		return &Logger{Logger: slog.Default()}
-	}
-	return logger
-}
+// Debug 输出调试日志。
+func Debug(msg string, args ...any) { base.Debug(msg, args...) }
 
-// ========== 便捷方法 ==========
+// Info 输出普通信息日志。
+func Info(msg string, args ...any) { base.Info(msg, args...) }
 
-// Debug 记录 debug 日志
-func Debug(msg string, args ...any) {
-	GetLogger().Debug(msg, args...)
-}
+// Warn 输出警告日志。
+func Warn(msg string, args ...any) { base.Warn(msg, args...) }
 
-// Info 记录 info 日志
-func Info(msg string, args ...any) {
-	GetLogger().Info(msg, args...)
-}
+// Error 输出错误日志。
+func Error(msg string, args ...any) { base.Error(msg, args...) }
 
-// Warn 记录 warn 日志
-func Warn(msg string, args ...any) {
-	GetLogger().Warn(msg, args...)
-}
+// DebugContext 携带 context 的调试日志。
+func DebugContext(ctx context.Context, msg string, args ...any) { base.DebugContext(ctx, msg, args...) }
 
-// Error 记录 error 日志
-func Error(msg string, args ...any) {
-	GetLogger().Error(msg, args...)
-}
+// InfoContext 携带 context 的信息日志。
+func InfoContext(ctx context.Context, msg string, args ...any) { base.InfoContext(ctx, msg, args...) }
 
-// DebugContext 带 context 的 debug 日志
-func DebugContext(ctx context.Context, msg string, args ...any) {
-	GetLogger().DebugContext(ctx, msg, args...)
-}
+// WarnContext 携带 context 的警告日志。
+func WarnContext(ctx context.Context, msg string, args ...any) { base.WarnContext(ctx, msg, args...) }
 
-// InfoContext 带 context 的 info 日志
-func InfoContext(ctx context.Context, msg string, args ...any) {
-	GetLogger().InfoContext(ctx, msg, args...)
-}
+// ErrorContext 携带 context 的错误日志。
+func ErrorContext(ctx context.Context, msg string, args ...any) { base.ErrorContext(ctx, msg, args...) }
 
-// WarnContext 带 context 的 warn 日志
-func WarnContext(ctx context.Context, msg string, args ...any) {
-	GetLogger().WarnContext(ctx, msg, args...)
-}
+// With 生成带额外字段的新 logger。
+func With(args ...any) *slog.Logger { return base.With(args...) }
 
-// ErrorContext 带 context 的 error 日志
-func ErrorContext(ctx context.Context, msg string, args ...any) {
-	GetLogger().ErrorContext(ctx, msg, args...)
-}
-
-// With 创建带自定义字段的 logger
-func With(args ...any) *Logger {
-	return &Logger{Logger: GetLogger().With(args...)}
+// Fatal 记录错误并退出进程（状态码1）。
+func Fatal(msg string, args ...any) {
+	base.Error(msg, args...)
+	os.Exit(1)
 }

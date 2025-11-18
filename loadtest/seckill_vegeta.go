@@ -6,12 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/CCDD2022/seckill-system/pkg/logger"
 
 	vegeta "github.com/tsenart/vegeta/v12/lib"
 )
@@ -48,13 +49,13 @@ func main() {
 
 	attackDuration, err := time.ParseDuration(*duration)
 	if err != nil {
-		log.Fatalf("invalid duration: %v", err)
+		logger.Fatal("invalid duration", "err", err)
 	}
 
 	// Prepare users
 	tokens := prepareTokens(*gateway, *users, *password, *register)
 	if len(tokens) == 0 {
-		log.Fatalf("no tokens prepared; aborting")
+		logger.Fatal("no tokens prepared; aborting")
 	}
 
 	// Parse optional product list
@@ -137,7 +138,7 @@ func main() {
 
 	data, _ := json.MarshalIndent(summary, "", "  ")
 	if err := os.WriteFile(*outJSON, data, 0644); err != nil {
-		log.Printf("write summary failed: %v", err)
+		logger.Warn("write summary failed", "err", err)
 	}
 	fmt.Println(string(data))
 }
@@ -155,14 +156,14 @@ func prepareTokens(gateway string, users int, password string, doRegister bool) 
 				"phone":    fmt.Sprintf("1380014%04d", i),
 			}
 			if err := postJSON(client, fmt.Sprintf("%s/api/v1/auth/register", gateway), regBody, nil); err != nil {
-				log.Printf("register %s: %v", uname, err)
+				logger.Warn("register failed", "username", uname, "err", err)
 			}
 		}
 		var lr loginResponse
 		loginBody := map[string]string{"username": uname, "password": password}
 		err := postJSON(client, fmt.Sprintf("%s/api/v1/auth/login", gateway), loginBody, &lr)
 		if err != nil || lr.Token == "" {
-			log.Printf("login failed %s: %v", uname, err)
+			logger.Warn("login failed", "username", uname, "err", err)
 			continue
 		}
 		tokens = append(tokens, lr.Token)

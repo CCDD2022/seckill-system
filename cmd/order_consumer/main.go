@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
@@ -30,8 +29,7 @@ func main() {
 	// 连接数据库
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
-		logger.Error("连接Mysql数据库失败: ", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接Mysql数据库失败", "err", err)
 	}
 	logger.Info("顺利连接数据库")
 
@@ -41,8 +39,7 @@ func main() {
 	// Redis for idempotency
 	rdb, err := redisinit.InitRedis(&cfg.Database.Redis)
 	if err != nil {
-		logger.Error("连接Redis失败: ", "err", err)
-		log.Fatal(err)
+		logger.Fatal("连接Redis失败", "err", err)
 	}
 
 	// 连接RabbitMQ
@@ -52,19 +49,19 @@ func main() {
 		cfg.MQ.Host,
 		cfg.MQ.Port))
 	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		logger.Fatal("Failed to connect to RabbitMQ", "err", err)
 	}
 	defer mqConn.Close()
 
 	mqChannel, err := mqConn.Channel()
 	if err != nil {
-		log.Fatalf("Failed to open a channel: %v", err)
+		logger.Fatal("Failed to open a channel", "err", err)
 	}
 	defer mqChannel.Close()
 
 	const exchangeName = "seckill.exchange"
 	if err := mqChannel.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
-		log.Fatalf("Failed to declare exchange: %v", err)
+		logger.Fatal("Failed to declare exchange", "err", err)
 	}
 	q, err := mqChannel.QueueDeclare(
 		"orders",
@@ -75,10 +72,10 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		log.Fatalf("Failed to declare a queue: %v", err)
+		logger.Fatal("Failed to declare a queue", "err", err)
 	}
 	if err := mqChannel.QueueBind(q.Name, "order.#", exchangeName, false, nil); err != nil {
-		log.Fatalf("Failed to bind queue: %v", err)
+		logger.Fatal("Failed to bind queue", "err", err)
 	}
 
 	// 设置消费者的QoS，允许批量预取
@@ -88,7 +85,7 @@ func main() {
 		false,                   // global
 	)
 	if err != nil {
-		log.Fatalf("Failed to set QoS: %v", err)
+		logger.Fatal("Failed to set QoS", "err", err)
 	}
 
 	// 开始消费消息
@@ -102,7 +99,7 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		log.Fatalf("Failed to register a consumer: %v", err)
+		logger.Fatal("Failed to register a consumer", "err", err)
 	}
 
 	logger.Info("Order Consumer started, waiting for messages...")

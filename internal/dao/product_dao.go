@@ -307,10 +307,17 @@ func (dao *ProductDao) safeInitStockAndDeduct(ctx context.Context, productID int
 	// 获取分布式锁（10秒过期，防止死锁）
 	// 这里锁的意义 防止多人从mysql里加载 然后扣减导致超卖
 	// setNX 只有该键不存在的时候才能被设置
-	acquired, err := dao.redis.SetNX(ctx, lockKey, 1, 10*time.Second).Result()
-	if err != nil || !acquired {
-		return errors.New("系统繁忙，请重试")
+	acquired, err := dao.redis.SetNX(ctx, lockKey, 1, 30*time.Second).Result()
+	if err != nil {
+		return errors.New("系统繁忙")
 	}
+
+	if !acquired {
+		// 未获取到锁，说明已有线程在加载，等待一段时间后重试扣减
+		time.Sleep(200 * time.Millisecond)
+		return dao.DeductStock(ctx, productID, quantity)
+	}
+
 	defer dao.redis.Del(ctx, lockKey) // 确保释放锁
 
 	// 双重检查（DCL模式）
