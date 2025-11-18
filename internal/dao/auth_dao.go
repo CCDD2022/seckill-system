@@ -18,6 +18,7 @@ func NewAuthDao(db *gorm.DB) *AuthDao {
 
 // CreateUser 创建用户
 func (dao *AuthDao) CreateUser(ctx context.Context, user *model.User) error {
+	dao.db.AutoMigrate(&model.User{})
 	return dao.db.WithContext(ctx).Create(user).Error
 }
 

@@ -103,6 +103,7 @@ func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Pro
 
 // CreateProduct 创建商品
 func (dao *ProductDao) CreateProduct(ctx context.Context, product *model.Product) (int64, error) {
+	dao.db.AutoMigrate(&model.Product{})
 	err := dao.db.WithContext(ctx).Create(product).Error
 	if err != nil {
 		return 0, err
