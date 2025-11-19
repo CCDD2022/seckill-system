@@ -4,40 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
+	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/proto_output/seckill"
 	"github.com/redis/go-redis/v9"
-	"github.com/streadway/amqp"
 )
 
 type SeckillService struct {
 	productDao *dao.ProductDao
 	redisDB    redis.UniversalClient
-	mqChannels []pubChannel
-	rrCounter  uint64
+	mqPool     *mq.Pool
 	seckill.UnimplementedSeckillServiceServer
 }
 
-type pubChannel struct {
-	ch       *amqp.Channel
-	confirms <-chan amqp.Confirmation
-}
-
-func NewSeckillService(productDao *dao.ProductDao, redisDB redis.UniversalClient, rawChannels []*amqp.Channel) *SeckillService {
-	pcs := make([]pubChannel, 0, len(rawChannels))
-	for _, ch := range rawChannels {
-		// Ensure confirm mode enabled per channel
-		_ = ch.Confirm(false)
-		conf := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-		pcs = append(pcs, pubChannel{ch: ch, confirms: conf})
-	}
+func NewSeckillService(productDao *dao.ProductDao, redisDB redis.UniversalClient, mqPool *mq.Pool) *SeckillService {
 	return &SeckillService{
 		productDao: productDao,
 		redisDB:    redisDB,
-		mqChannels: pcs,
+		mqPool:     mqPool,
 	}
 }
 
@@ -65,21 +51,21 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	userID := req.UserId
 	quantity := req.Quantity
 
-	// 快速校验：时间窗口与基本参数（避免无意义的后续操作）
-	{
-		cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-		defer cancel()
-		p, err := s.productDao.GetProductByID(cctx, productID)
-		if err == nil && p != nil && p.SeckillStartTime != nil && p.SeckillEndTime != nil {
-			now := time.Now()
-			if now.Before(*p.SeckillStartTime) {
-				return &seckill.SeckillResponse{Success: false, Message: "活动未开始"}, nil
-			}
-			if now.After(*p.SeckillEndTime) {
-				return &seckill.SeckillResponse{Success: false, Message: "活动已结束"}, nil
-			}
-		}
-	}
+	//// 快速校验：时间窗口与基本参数（避免无意义的后续操作）
+	//{
+	//	cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	//	defer cancel()
+	//	p, err := s.productDao.GetProductByID(cctx, productID)
+	//	if err == nil && p != nil && p.SeckillStartTime != nil && p.SeckillEndTime != nil {
+	//		now := time.Now()
+	//		if now.Before(*p.SeckillStartTime) {
+	//			return &seckill.SeckillResponse{Success: false, Message: "活动未开始"}, nil
+	//		}
+	//		if now.After(*p.SeckillEndTime) {
+	//			return &seckill.SeckillResponse{Success: false, Message: "活动已结束"}, nil
+	//		}
+	//	}
+	//}
 
 	// 1. 使用分布式锁（防重复下单）；短超时，避免阻塞
 	// userid + productid 作为锁的key 防止重复下单
@@ -111,7 +97,8 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	}
 
 	// 2.1 发送库存变更日志（非关键，不影响主流程）
-	_ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: -quantity, Reason: "seckill_deduct", TimeUnix: time.Now().Unix()})
+	_ = s.publishStockLog(
+		StockLogMessage{ProductID: productID, Delta: -quantity, Reason: "seckill_deduct", TimeUnix: time.Now().Unix()})
 
 	// 3. 获取商品信息计算总价
 	pctx, pcancel := context.WithTimeout(ctx, 150*time.Millisecond)
@@ -146,43 +133,17 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 		}, err
 	}
 
-	pch := s.pickChannel()
-	if pch == nil {
-		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
-		_ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_no_channel", TimeUnix: time.Now().Unix()})
-		return &seckill.SeckillResponse{Success: false, Message: "系统繁忙，请重试"}, fmt.Errorf("no mq channel available")
-	}
+	// 生成消息ID用于消费端幂等（当前序列化到 Body 中的业务字段）
+	_ = fmt.Sprintf("%d-%d-%d", userID, productID, time.Now().UnixNano())
 
-	// 生成消息ID用于消费端幂等
-	msgID := fmt.Sprintf("%d-%d-%d", userID, productID, time.Now().UnixNano())
-
-	publish := amqp.Publishing{
-		ContentType:  "application/json",
-		Body:         msgBody,
-		MessageId:    msgID,
-		DeliveryMode: amqp.Persistent,
-		Timestamp:    time.Now(),
-	}
-	if err := pch.ch.Publish(mqExchange, "order.create", false, false, publish); err != nil {
+	// 发布创建订单事件（异步Confirm，提高吞吐）
+	// 将消息ID放入 Header/Body 供消费者去重（此处直接放 Body 字段 msgID）
+	if err := s.mqPool.PublishAsync(mqExchange, "order.create", msgBody); err != nil {
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
 		_ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_fail", TimeUnix: time.Now().Unix()})
 		return &seckill.SeckillResponse{Success: false, Message: "秒杀失败，请重试"}, err
 	}
-
-	// 同步等待发布确认（每通道顺序确认）
-	select {
-	case cf := <-pch.confirms:
-		if !cf.Ack {
-			_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
-			_ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_nack", TimeUnix: time.Now().Unix()})
-			return &seckill.SeckillResponse{Success: false, Message: "秒杀失败，请重试"}, fmt.Errorf("publish not acked")
-		}
-	case <-time.After(300 * time.Millisecond):
-		// 超时视为失败，回滚
-		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
-		_ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_timeout", TimeUnix: time.Now().Unix()})
-		return &seckill.SeckillResponse{Success: false, Message: "系统繁忙，请重试"}, fmt.Errorf("publish confirm timeout")
-	}
+	// 不再等待确认，改为异步处理（提高吞吐）
 
 	return &seckill.SeckillResponse{
 		Success: true,
@@ -191,25 +152,7 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	}, nil
 }
 
-func (s *SeckillService) pickChannel() *pubChannel {
-	if len(s.mqChannels) == 0 {
-		return nil
-	}
-	i := atomic.AddUint64(&s.rrCounter, 1)
-	return &s.mqChannels[int(i)%len(s.mqChannels)]
-}
-
 func (s *SeckillService) publishStockLog(m StockLogMessage) error {
-	pch := s.pickChannel()
-	if pch == nil {
-		return fmt.Errorf("no mq channel available")
-	}
 	b, _ := json.Marshal(m)
-	return pch.ch.Publish(
-		mqExchange,
-		"stock.change",
-		false,
-		false,
-		amqp.Publishing{ContentType: "application/json", Body: b, DeliveryMode: amqp.Persistent, Timestamp: time.Now()},
-	)
+	return s.mqPool.PublishAsync(mqExchange, "stock.change", b)
 }

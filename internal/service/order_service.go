@@ -10,10 +10,10 @@ import (
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/model"
+	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/pkg/e"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/CCDD2022/seckill-system/proto_output/order"
-	"github.com/streadway/amqp"
 	"gorm.io/gorm"
 )
 
@@ -30,15 +30,15 @@ const orderCanceledQueue = "order.canceled"
 
 type OrderService struct {
 	orderDao *dao.OrderDao
-	mqChan   *amqp.Channel
+	mqPool   *mq.Pool
 	order.UnimplementedOrderServiceServer
 }
 
-// NewOrderServiceWithMQ 带MQ发布能力的订单服务
-func NewOrderServiceWithMQ(orderDao *dao.OrderDao, mqChan *amqp.Channel) *OrderService {
+// NewOrderServiceWithMQ 带MQ发布能力的订单服务（使用生产者池）
+func NewOrderServiceWithMQ(orderDao *dao.OrderDao, mqPool *mq.Pool) *OrderService {
 	return &OrderService{
 		orderDao: orderDao,
-		mqChan:   mqChan,
+		mqPool:   mqPool,
 	}
 }
 
@@ -172,15 +172,8 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		}, err
 	}
 
-	// 发布取消事件
-	if s.mqChan != nil {
-		// 确保队列存在（幂等声明）
-		_, _ = s.mqChan.QueueDeclare(orderCanceledQueue,
-			true,
-			false,
-			false,
-			false,
-			nil)
+	// 发布取消事件（生产者池异步发布，不等待确认）
+	if s.mqPool != nil {
 		evt := orderCanceledEvent{
 			// 订单号 + 商品ID + 用户ID 组成幂等事件ID
 			EventID:    generateEventID(req.OrderId, ord.ProductID, req.UserId),
@@ -191,18 +184,7 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			Quantity:   ord.Quantity,
 		}
 		if b, mErr := json.Marshal(evt); mErr == nil {
-			if err := s.mqChan.Publish(
-				"", // 默认交换机
-				orderCanceledQueue,
-				false,
-				false,
-				amqp.Publishing{
-					DeliveryMode: amqp.Persistent,
-					ContentType:  "application/json",
-					Body:         b,
-					Timestamp:    time.Now(),
-					Type:         "order.canceled",
-				}); err != nil {
+			if err := s.mqPool.PublishAsync("", orderCanceledQueue, b); err != nil {
 				logger.Warn("订单取消事件发布失败", "order_id", req.OrderId, "err", err)
 			} else {
 				logger.Info("订单取消事件已发布", "order_id", req.OrderId, "product_id", ord.ProductID, "qty", ord.Quantity)

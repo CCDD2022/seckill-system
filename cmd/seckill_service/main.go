@@ -8,11 +8,11 @@ import (
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
 	"github.com/CCDD2022/seckill-system/internal/dao/redis"
+	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/internal/service"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/CCDD2022/seckill-system/proto_output/seckill"
-	"github.com/streadway/amqp"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -41,89 +41,22 @@ func main() {
 		logger.Info("Redis连接池预热完成", "minIdleConns", 100)
 	}
 
-	// 连接RabbitMQ
-	mqConn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%d/",
-		cfg.MQ.User,
-		cfg.MQ.Password,
-		cfg.MQ.Host,
-		cfg.MQ.Port))
+	// 使用统一 MQ 封装
+	mqPool, err := mq.Init(&cfg.MQ)
 	if err != nil {
-		logger.Fatal("Failed to connect to RabbitMQ", "err", err)
+		logger.Fatal("init mq failed", "err", err)
 	}
-	defer mqConn.Close()
-
-	// 创建通道池
-	poolSize := cfg.MQ.ChannelPoolSize
-	channels := make([]*amqp.Channel, 0, poolSize)
-	for i := 0; i < poolSize; i++ {
-		ch, err := mqConn.Channel()
-		if err != nil {
-			logger.Fatal("Failed to open a channel", "err", err)
-		}
-		// todo 必须开启发布确认
-		if err := ch.Confirm(false); err != nil {
-			logger.Fatal("Failed to enable confirm mode: ", "err", err)
-		}
-
-		channels = append(channels, ch)
+	defer mqPool.Close()
+	if err := mqPool.EnsureBaseTopology(); err != nil {
+		logger.Fatal("ensure base topology failed", "err", err)
 	}
-	defer func() {
-		for _, ch := range channels {
-			_ = ch.Close()
-		}
-	}()
-
-	// 声明 Topic Exchange 和相关队列/绑定（幂等）
-	const exchangeName = "seckill.exchange"
-	if err := channels[0].ExchangeDeclare(
-		exchangeName,
-		"topic",
-		true,  // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil,
-	); err != nil {
-		logger.Fatal("Failed to declare exchange", "err", err)
-	}
-
-	ordersQ, err := channels[0].QueueDeclare(
-		"orders",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		logger.Fatal("Failed to declare orders queue", "err", err)
-	}
-	if err := channels[0].QueueBind(ordersQ.Name, "order.#", exchangeName, false, nil); err != nil {
-		logger.Fatal("Failed to bind orders queue", "err", err)
-	}
-
-	stockLogQ, err := channels[0].QueueDeclare(
-		"stock_log",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		logger.Fatal("Failed to declare stock_log queue", "err", err)
-	}
-	if err := channels[0].QueueBind(stockLogQ.Name, "stock.#", exchangeName, false, nil); err != nil {
-		logger.Fatal("Failed to bind stock_log queue", "err", err)
-	}
-
-	logger.Info("RabbitMQ connected")
+	logger.Info("RabbitMQ connected & topology ready")
 
 	// 创建ProductDao
 	productDao := dao.NewProductDao(db, redisDB)
 
-	// 创建 Seckill Service（传入通道池）
-	seckillService := service.NewSeckillService(productDao, redisDB, channels)
+	// 创建 Seckill Service（传入生产者池）
+	seckillService := service.NewSeckillService(productDao, redisDB, mqPool)
 
 	// 创建 gRPC 服务器
 	grpcServer := grpc.NewServer(

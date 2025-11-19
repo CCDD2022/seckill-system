@@ -10,9 +10,9 @@ import (
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
 	rds "github.com/CCDD2022/seckill-system/internal/dao/redis"
+	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
-	"github.com/streadway/amqp"
 )
 
 type OrderCanceledEvent struct {
@@ -43,28 +43,15 @@ func main() {
 	}
 	productDao := dao.NewProductDao(db, rdb)
 
-	mqURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.MQ.User, cfg.MQ.Password, cfg.MQ.Host, cfg.MQ.Port)
-	mqConn, err := amqp.Dial(mqURL)
+	mqPool, err := mq.Init(&cfg.MQ)
 	if err != nil {
-		logger.Fatal("连接RabbitMQ失败", "err", err)
+		logger.Fatal("init mq failed", "err", err)
 	}
-	defer mqConn.Close()
-	ch, err := mqConn.Channel()
+	msgs, consumerCh, err := mqPool.DeclareAndConsume(queueOrderCanceled, "order.canceled", "seckill.exchange", true, 1)
 	if err != nil {
-		logger.Fatal("打开RabbitMQ通道失败", "err", err)
+		logger.Fatal("declare & consume failed", "err", err)
 	}
-	defer ch.Close()
-	q, err := ch.QueueDeclare(queueOrderCanceled, true, false, false, false, nil)
-	if err != nil {
-		logger.Fatal("声明队列失败", "err", err)
-	}
-	if err := ch.Qos(1, 0, false); err != nil {
-		logger.Fatal("设置QoS失败", "err", err)
-	}
-	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
-	if err != nil {
-		logger.Fatal("注册消费者失败", "err", err)
-	}
+	defer func() { _ = consumerCh.Close(); mqPool.Close() }()
 
 	logger.Info("Product Consumer started, waiting for order.canceled events...")
 	forever := make(chan bool)
