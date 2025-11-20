@@ -38,6 +38,7 @@ func InitRedis(cfg *config.RedisConfig) (redis.UniversalClient, error) {
 		ReadTimeout:     3 * time.Second,
 		WriteTimeout:    3 * time.Second,
 		PoolTimeout:     4 * time.Second, // 获取连接的超时时间
+		
 	}
 
 	redisDB = redis.NewUniversalClient(uopts)
