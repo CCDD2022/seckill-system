@@ -88,8 +88,6 @@ func (s *ProductService) CreateProduct(ctx context.Context, request *product.Cre
 		}, err
 	}
 
-	// 列表缓存已弃用，不再清理
-
 	return &product.CreateProductResponse{
 		Code:      e.SUCCESS,
 		Message:   e.GetMsg(e.SUCCESS),
@@ -142,7 +140,6 @@ func (s *ProductService) UpdateProduct(ctx context.Context, request *product.Upd
 	if endTime != nil {
 		updates["seckill_end_time"] = *endTime
 	}
-	// 旧字符串判断移除（现为int64）
 
 	// 如果没有需要更新的字段，返回错误
 	if len(updates) == 0 {
@@ -162,13 +159,6 @@ func (s *ProductService) UpdateProduct(ctx context.Context, request *product.Upd
 		}, err
 	}
 
-	// 清理商品详情缓存（列表缓存已弃用）
-	go func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		s.productDao.ClearProductCache(cleanupCtx, request.ProductId)
-	}()
-
 	return &product.UpdateProductResponse{
 		Code:    e.SUCCESS,
 		Message: e.GetMsg(e.SUCCESS),
@@ -184,7 +174,7 @@ func (s *ProductService) DeleteProduct(ctx context.Context, request *product.Del
 		return &product.DeleteProductResponse{
 			Code:    e.ERROR_PRODUCT_NOT_EXISTS,
 			Message: e.GetMsg(e.ERROR_PRODUCT_NOT_EXISTS),
-		}, err
+		}, nil
 	}
 
 	// 删除商品
@@ -196,13 +186,6 @@ func (s *ProductService) DeleteProduct(ctx context.Context, request *product.Del
 			Message: e.GetMsg(e.ERROR),
 		}, err
 	}
-
-	// 清理商品详情缓存（列表缓存已弃用）
-	go func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		s.productDao.ClearProductCache(cleanupCtx, request.ProductId)
-	}()
 
 	return &product.DeleteProductResponse{
 		Code:    e.SUCCESS,
@@ -219,10 +202,10 @@ func (s *ProductService) ListProducts(ctx context.Context, request *product.List
 	if err != nil {
 		return &product.ListProductsResponse{Code: e.ERROR, Message: e.GetMsg(e.ERROR)}, err
 	}
-	if int64(offset) >= int64(total) {
-		return s.buildListResponse([]*model.Product{}, int64(total), e.SUCCESS), nil
+	if int64(offset) >= total {
+		return s.buildListResponse([]*model.Product{}, total, e.SUCCESS), nil
 	}
-	return s.buildListResponse(products, int64(total), e.SUCCESS), nil
+	return s.buildListResponse(products, total, e.SUCCESS), nil
 }
 
 // buildListResponse 构建列表响应
@@ -255,6 +238,3 @@ func (s *ProductService) buildListResponse(products []*model.Product, total int6
 		Total:    int32(total),
 	}
 }
-
-// updateCache 异步更新缓存
-// 移除缓存更新逻辑：按需求直接访问数据库

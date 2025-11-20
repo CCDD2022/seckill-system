@@ -18,7 +18,7 @@ import (
 
 const (
 	dirtySetKey      = "product:dirty"        // 库存变更的商品id
-	stockKeyTemplate = "product:%d"           // Redis里的库存Key
+	stockKeyTemplate = "stock:%d"             // Redis里的库存Key
 	flushBatch       = 1000                   // 每次最多处理1000个商品
 	flushInterval    = 100 * time.Millisecond // 刷新间隔
 )

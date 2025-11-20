@@ -62,7 +62,7 @@ func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Pro
 			}
 			cacheValue, _ := json.Marshal(emptyProduct)
 			if err := dao.redis.Set(ctx, cacheKey, cacheValue, 5*time.Minute).Err(); err != nil {
-				logger.Info("缓存写入失败", "key", cacheKey, "err", err)
+				logger.Error("缓存写入失败", "key", cacheKey, "err", err)
 			}
 			return nil, err
 		} else if err != nil {
