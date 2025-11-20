@@ -15,22 +15,15 @@ var redisDB redis.UniversalClient
 
 // InitRedis initializes redis client for standalone or cluster based on config
 func InitRedis(cfg *config.RedisConfig) (redis.UniversalClient, error) {
-	// Build addresses
-	addrs := cfg.Addrs
-	if len(addrs) == 0 {
-		addrs = []string{fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)}
-	}
-
-	// Universal client handles standalone and cluster transparently
-	uopts := &redis.UniversalOptions{
-		Addrs:           addrs,
+	// 单机地址
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	opts := &redis.Options{
+		Addr:            addr,
 		DB:              cfg.DB,
 		Password:        cfg.Password,
 		PoolSize:        500,
 		MinIdleConns:    100,
-		MaxIdleConns:    400,
 		ConnMaxLifetime: 30 * time.Minute,
-		// ✅ 重试和超时配置
 		MaxRetries:      5,
 		MinRetryBackoff: 8 * time.Millisecond,
 		MaxRetryBackoff: 512 * time.Millisecond,
@@ -40,16 +33,14 @@ func InitRedis(cfg *config.RedisConfig) (redis.UniversalClient, error) {
 		PoolTimeout:     4 * time.Second, // 获取连接的超时时间
 		
 	}
-
-	redisDB = redis.NewUniversalClient(uopts)
-
+	client := redis.NewClient(opts)
+	redisDB = client
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	if _, err := redisDB.Ping(ctx).Result(); err != nil {
+	if _, err := client.Ping(ctx).Result(); err != nil {
 		return nil, fmt.Errorf("redis连通失败: %w", err)
 	}
-	return redisDB, nil
+	return client, nil
 }
 
 func GetRedisDB() redis.UniversalClient {

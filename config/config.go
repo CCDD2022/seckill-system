@@ -51,13 +51,10 @@ type MySQLConfig struct {
 
 // RedisConfig Redis配置
 type RedisConfig struct {
-	// Mode: standalone | cluster
-	Mode     string   `yaml:"mode" mapstructure:"mode"`
-	Host     string   `yaml:"host"`
-	Port     int      `yaml:"port"`
-	Addrs    []string `yaml:"addrs" mapstructure:"addrs"`
-	Password string   `yaml:"password"`
-	DB       int      `yaml:"db"`
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
 }
 
 // JWTConfig JWT认证配置

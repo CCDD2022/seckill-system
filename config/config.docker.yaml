@@ -53,16 +53,10 @@ database:
     max_idle_conns: 100
 
   redis:
-    mode: cluster
+    host: redis
+    port: 6379
     password: ""
     db: 0
-    addrs:
-      - redis-node-1:6379
-      - redis-node-2:6379
-      - redis-node-3:6379
-      - redis-node-4:6379
-      - redis-node-5:6379
-      - redis-node-6:6379
 
 # JWT配置
 jwt:
