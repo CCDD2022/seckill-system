@@ -43,15 +43,11 @@ func main() {
 	}
 	productDao := dao.NewProductDao(db, rdb)
 
-	mqPool, err := mq.Init(&cfg.MQ)
+	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, queueOrderCanceled, "order.canceled", "seckill.exchange", true, 1)
 	if err != nil {
-		logger.Fatal("init mq failed", "err", err)
+		logger.Fatal("init consumer channel failed", "err", err)
 	}
-	msgs, consumerCh, err := mqPool.DeclareAndConsume(queueOrderCanceled, "order.canceled", "seckill.exchange", true, 1)
-	if err != nil {
-		logger.Fatal("declare & consume failed", "err", err)
-	}
-	defer func() { _ = consumerCh.Close(); mqPool.Close() }()
+	defer func() { mq.CloseConsumer(conn, consumerCh) }()
 
 	logger.Info("Product Consumer started, waiting for order.canceled events...")
 	forever := make(chan bool)

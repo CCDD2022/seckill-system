@@ -51,22 +51,6 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	userID := req.UserId
 	quantity := req.Quantity
 
-	//// 快速校验：时间窗口与基本参数（避免无意义的后续操作）
-	//{
-	//	cctx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	//	defer cancel()
-	//	p, err := s.productDao.GetProductByID(cctx, productID)
-	//	if err == nil && p != nil && p.SeckillStartTime != nil && p.SeckillEndTime != nil {
-	//		now := time.Now()
-	//		if now.Before(*p.SeckillStartTime) {
-	//			return &seckill.SeckillResponse{Success: false, Message: "活动未开始"}, nil
-	//		}
-	//		if now.After(*p.SeckillEndTime) {
-	//			return &seckill.SeckillResponse{Success: false, Message: "活动已结束"}, nil
-	//		}
-	//	}
-	//}
-
 	// 1. 使用分布式锁（防重复下单）；短超时，避免阻塞
 	// userid + productid 作为锁的key 防止重复下单
 	lockKey := fmt.Sprintf("seckill:lock:user:%d:product:%d", userID, productID)
@@ -97,8 +81,8 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	}
 
 	// 2.1 发送库存变更日志（非关键，不影响主流程）
-	_ = s.publishStockLog(
-		StockLogMessage{ProductID: productID, Delta: -quantity, Reason: "seckill_deduct", TimeUnix: time.Now().Unix()})
+	// _ = s.publishStockLog(
+	// 		StockLogMessage{ProductID: productID, Delta: -quantity, Reason: "seckill_deduct", TimeUnix: time.Now().Unix()})
 
 	// 3. 获取商品信息计算总价
 	pctx, pcancel := context.WithTimeout(ctx, 150*time.Millisecond)
@@ -140,7 +124,7 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	// 将消息ID放入 Header/Body 供消费者去重（此处直接放 Body 字段 msgID）
 	if err := s.mqPool.PublishAsync(mqExchange, "order.create", msgBody); err != nil {
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
-		_ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_fail", TimeUnix: time.Now().Unix()})
+		// _ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_fail", TimeUnix: time.Now().Unix()})
 		return &seckill.SeckillResponse{Success: false, Message: "秒杀失败，请重试"}, err
 	}
 	// 不再等待确认，改为异步处理（提高吞吐）
@@ -152,7 +136,8 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	}, nil
 }
 
-func (s *SeckillService) publishStockLog(m StockLogMessage) error {
-	b, _ := json.Marshal(m)
-	return s.mqPool.PublishAsync(mqExchange, "stock.change", b)
-}
+//
+//func (s *SeckillService) publishStockLog(m StockLogMessage) error {
+//	b, _ := json.Marshal(m)
+//	return s.mqPool.PublishAsync(mqExchange, "stock.change", b)
+//}

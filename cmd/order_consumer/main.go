@@ -25,6 +25,7 @@ type SeckillMessage struct {
 func main() {
 	cfg := app.BootstrapApp()
 
+	// 连接数据库
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
 		logger.Fatal("连接Mysql数据库失败", "err", err)
@@ -36,19 +37,12 @@ func main() {
 		logger.Fatal("连接Redis失败", "err", err)
 	}
 
-	mqPool, err := mq.Init(&cfg.MQ)
+	// 初始化消费者
+	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, "orders", "order.#", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch)
 	if err != nil {
-		logger.Fatal("init mq failed", "err", err)
+		logger.Fatal("init consumer channel failed", "err", err)
 	}
-	defer mqPool.Close()
-	if err := mqPool.EnsureBaseTopology(); err != nil {
-		logger.Fatal("ensure base topology failed", "err", err)
-	}
-	msgs, consumerCh, err := mqPool.DeclareAndConsume("orders", "order.#", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch)
-	if err != nil {
-		logger.Fatal("declare & consume failed", "err", err)
-	}
-	defer consumerCh.Close()
+	defer mq.CloseConsumer(conn, consumerCh)
 
 	type item struct {
 		d   amqp.Delivery

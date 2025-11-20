@@ -28,46 +28,38 @@ func NewProductDao(db *gorm.DB, redis redis.UniversalClient) *ProductDao {
 
 // 缓存相关常量
 const (
-	productStockKeyPrefix     = "product:stock:product:id"
-	productCacheKeyPrefix     = "product:cache:id:"
-	productListCacheKeyPrefix = "product:list:page:"
-	cacheExpiration           = 30 * time.Minute
-	productDirtySetKey        = "product:stock:dirty:set"
+	productStockKeyTemplate = "stock:%d"
+	productCacheKeyTemplate = "product:%d"
+	cacheExpiration         = 30 * time.Minute
+	productDirtySetKey      = "product:dirty"
 )
 
 // getProductCacheKey 生成单个商品缓存键
 func getProductCacheKey(id int64) string {
-	return productCacheKeyPrefix + strconv.FormatInt(id, 10)
+	return fmt.Sprintf(productCacheKeyTemplate, id)
 }
 
 // getProductStockKey 生成库存缓存键
 func getProductStockKey(id int64) string {
-	return productStockKeyPrefix + strconv.FormatInt(id, 10)
+	return fmt.Sprintf(productStockKeyTemplate, id)
 }
-
-// BuildProductStockKey 对外暴露的库存键构造函数，保证跨服务一致
-func BuildProductStockKey(id int64) string {
-	return getProductStockKey(id)
-}
-
-// GetListCacheKey 生成商品列表缓存键（分页）
-func GetListCacheKey(page, pageSize int32) string {
-	return productListCacheKeyPrefix + strconv.FormatInt(int64(page), 10) + ":size:" + strconv.FormatInt(int64(pageSize), 10)
-}
-
-// GetListCacheKeyWithStatus 生成带状态筛选的商品列表缓存键
-// 已移除状态分片缓存功能，统一使用基础分页缓存键
 
 // GetProductByID 根据ID查询商品（带缓存）
 func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Product, error) {
 	cacheKey := getProductCacheKey(id)
 
 	cachedData, err := dao.redis.Get(ctx, cacheKey).Result()
+	// redis里不包含该键
 	if errors.Is(err, redis.Nil) {
 		var product model.Product
+		// 从数据库里查询
 		err = dao.db.WithContext(ctx).First(&product, "id = ?", id).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			emptyProduct := &model.Product{}
+			// 数据库没找到该商品
+			// 缓存空商品 防止后续多次访问空商品导致数据库压力过大
+			emptyProduct := &model.Product{
+				ID: 0,
+			}
 			cacheValue, _ := json.Marshal(emptyProduct)
 			if err := dao.redis.Set(ctx, cacheKey, cacheValue, 5*time.Minute).Err(); err != nil {
 				logger.Info("缓存写入失败", "key", cacheKey, "err", err)
@@ -77,22 +69,27 @@ func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Pro
 			return nil, err
 		}
 
+		// 序列化 写入缓存
 		if productJSON, marshalErr := json.Marshal(product); marshalErr == nil {
 			dao.redis.Set(ctx, cacheKey, productJSON, cacheExpiration)
 		}
-
+		// 计算目前的秒杀状态 获取最新的返回给前端
 		product.CalculateSeckillStatus()
 		return &product, nil
 	} else if err != nil {
 		return nil, err
 	}
 
+	// 从缓存里反序列化
 	var product model.Product
+
+	// 解析错误 删除缓存并重试(即从数据库加载)
 	if err := json.Unmarshal([]byte(cachedData), &product); err != nil {
 		dao.redis.Del(ctx, cacheKey)
 		return dao.GetProductByID(ctx, id)
 	}
 
+	// 是我们约定好的空商品
 	if product.ID == 0 {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -103,7 +100,6 @@ func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Pro
 
 // CreateProduct 创建商品
 func (dao *ProductDao) CreateProduct(ctx context.Context, product *model.Product) (int64, error) {
-	dao.db.AutoMigrate(&model.Product{})
 	err := dao.db.WithContext(ctx).Create(product).Error
 	if err != nil {
 		return 0, err
@@ -113,28 +109,14 @@ func (dao *ProductDao) CreateProduct(ctx context.Context, product *model.Product
 
 // DeleteProductByID 删除商品
 func (dao *ProductDao) DeleteProductByID(ctx context.Context, id int64) error {
+	dao.ClearProductCache(ctx, id)
 	return dao.db.WithContext(ctx).Delete(&model.Product{}, id).Error
 }
 
 // UpdateProduct 更新商品
 func (dao *ProductDao) UpdateProduct(ctx context.Context, id int64, updates map[string]interface{}) error {
+	dao.ClearProductCache(ctx, id)
 	return dao.db.WithContext(ctx).Model(&model.Product{}).Where("id = ?", id).Updates(updates).Error
-}
-
-// GetTotalProducts 获取商品总数
-func (dao *ProductDao) GetTotalProducts(ctx context.Context) (int64, error) {
-	var total int64
-	err := dao.db.WithContext(ctx).Model(&model.Product{}).Count(&total).Error
-	return total, err
-}
-
-// GetTotalProductsByStatus 根据状态获取商品总数
-func (dao *ProductDao) GetTotalProductsByStatus(ctx context.Context, statusFilter model.ProductSeckillStatus) (int64, error) {
-	var total int64
-	query := dao.db.WithContext(ctx).Model(&model.Product{})
-	query = dao.applyStatusFilter(query, statusFilter)
-	err := query.Count(&total).Error
-	return total, err
 }
 
 // ListProductsFromDBWithStatus 从数据库分页查询商品，支持状态筛选（-1 表示全部）
@@ -159,9 +141,6 @@ func (dao *ProductDao) ListProductsFromDBWithStatus(ctx context.Context, offset,
 	return products, total, nil
 }
 
-// ListProductsFromDBWithStatus 从数据库查询分页商品列表（支持状态筛选）
-// 移除带状态筛选的专用分页函数，改为外部根据需要复制逻辑或直接使用 applyStatusFilter
-
 // applyStatusFilter 应用状态筛选条件
 func (dao *ProductDao) applyStatusFilter(query *gorm.DB, statusFilter model.ProductSeckillStatus) *gorm.DB {
 	now := time.Now().Format(time.DateTime)
@@ -183,62 +162,6 @@ func (dao *ProductDao) applyStatusFilter(query *gorm.DB, statusFilter model.Prod
 func (dao *ProductDao) ClearProductCache(ctx context.Context, id int64) {
 	cacheKey := getProductCacheKey(id)
 	dao.redis.Del(ctx, cacheKey)
-}
-
-// ClearListCache 清理商品列表缓存（分页所有键）
-func (dao *ProductDao) ClearListCache(ctx context.Context) error {
-	// 使用通配扫描，避免阻塞
-	var cursor uint64
-	for {
-		keys, next, err := dao.redis.Scan(ctx, cursor, productListCacheKeyPrefix+"*", 100).Result()
-		if err != nil {
-			return err
-		}
-		if len(keys) > 0 {
-			if err := dao.redis.Del(ctx, keys...).Err(); err != nil {
-				return err
-			}
-		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
-	}
-	return nil
-}
-
-// GetProductsFromCache 从缓存读取分页商品列表
-func (dao *ProductDao) GetProductsFromCache(ctx context.Context, cacheKey string) ([]*model.Product, int64, error) {
-	val, err := dao.redis.Get(ctx, cacheKey).Result()
-	if err != nil {
-		return nil, 0, err
-	}
-	var payload struct {
-		Products []*model.Product `json:"products"`
-		Total    int64            `json:"total"`
-	}
-	if err := json.Unmarshal([]byte(val), &payload); err != nil {
-		// 缓存损坏则删除
-		_ = dao.redis.Del(ctx, cacheKey).Err()
-		return nil, 0, err
-	}
-	for i := range payload.Products {
-		payload.Products[i].CalculateSeckillStatus()
-	}
-	return payload.Products, payload.Total, nil
-}
-
-// SetProductsToCache 将分页商品列表写入缓存
-func (dao *ProductDao) SetProductsToCache(ctx context.Context, cacheKey string, products []*model.Product, total int64) error {
-	payload := struct {
-		Products []*model.Product `json:"products"`
-		Total    int64            `json:"total"`
-	}{Products: products, Total: total}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return dao.redis.Set(ctx, cacheKey, b, cacheExpiration).Err()
 }
 
 // DeductStock 优化 - Lua脚本返回状态码，避免额外Redis调用
@@ -279,6 +202,8 @@ func (dao *ProductDao) DeductStock(ctx context.Context, productID int64, quantit
 
 	// 成功：stockResult是新库存值
 	logger.Debug("库存扣减成功", "product_id", productID, "quantity", quantity, "new_stock", stockResult)
+
+	// SAdd 向集合中添加成员
 
 	// 标记该商品库存已变更，交由对账批处理服务合并更新MySQL
 	_ = dao.redis.SAdd(ctx, productDirtySetKey, strconv.FormatInt(productID, 10)).Err()
@@ -344,9 +269,6 @@ func (dao *ProductDao) initStockFromMySQL(ctx context.Context, productID int64) 
 	redisKey := getProductStockKey(productID)
 	return dao.redis.Set(ctx, redisKey, product.Stock, 0).Err()
 }
-
-// asyncUpdateMySQLStockV2 增强版异步更新 - 带保护条件和告警
-// asyncUpdateMySQLStockV2 已废弃：由批处理对账服务统一落库，防止热点行锁与不对称回滚导致库存漂移
 
 // ReturnStock 归还库存（Redis优化版）- Lua返回状态码
 func (dao *ProductDao) ReturnStock(ctx context.Context, productID int64, quantity int32) error {
