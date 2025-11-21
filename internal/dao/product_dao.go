@@ -166,7 +166,9 @@ func (dao *ProductDao) applyStatusFilter(query *gorm.DB, statusFilter model.Prod
 // ClearProductCache 清理商品缓存
 func (dao *ProductDao) ClearProductCache(ctx context.Context, id int64) {
 	cacheKey := getProductCacheKey(id)
-	dao.redis.Del(ctx, cacheKey)
+	priceKey := getProductPriceKey(id)
+	// 同步删除商品详情与价格小Key，保持一致性
+	dao.redis.Del(ctx, cacheKey, priceKey)
 }
 
 // GetProductPrice 轻量获取商品价格（优先Redis，小Key，避免反序列化整对象）
