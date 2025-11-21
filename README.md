@@ -115,7 +115,7 @@
     go run cmd/seckill_service/main.go
     
     # 终端5: 启动 Order Consumer
-    go run cmd/order_consumer/main.go
+    go run cmd/order_create_consumer/main.go
     
     # 终端6: 启动 API Gateway
     go run cmd/api_gateway/main.go

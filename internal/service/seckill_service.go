@@ -117,12 +117,12 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 		}, err
 	}
 
-	// 生成消息ID用于消费端幂等（当前序列化到 Body 中的业务字段）
-	_ = fmt.Sprintf("%d-%d-%d", userID, productID, time.Now().UnixNano())
+	// 生成 MessageId（用于消费者 Redis 幂等 SetNX）
+	// 尽量包含业务语义前缀，便于排查
+	msgID := fmt.Sprintf("create:%d:%d:%d", userID, productID, time.Now().UnixNano())
 
-	// 发布创建订单事件（异步Confirm，提高吞吐）
-	// 将消息ID放入 Header/Body 供消费者去重（此处直接放 Body 字段 msgID）
-	if err := s.mqPool.PublishAsync(mqExchange, "order.create", msgBody); err != nil {
+	// 发布创建订单事件（异步Confirm，提高吞吐），携带 MessageId
+	if err := s.mqPool.PublishAsyncWithID(mqExchange, "order.create", msgBody, msgID); err != nil {
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
 		// _ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_fail", TimeUnix: time.Now().Unix()})
 		return &seckill.SeckillResponse{Success: false, Message: "秒杀失败，请重试"}, err

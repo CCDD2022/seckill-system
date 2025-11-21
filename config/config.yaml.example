@@ -69,10 +69,8 @@ mq:
   port: 5672
   user: guest
   password: guest
-  channel_pool_size: 32
-  consumer_prefetch: 1000
-  order_batch_size: 200
-  order_batch_interval_ms: 100
+  channel_pool_size: 8
+  consumer_prefetch: 1
 
 # 限流 (可按压测/生产调整)
 rate_limits:

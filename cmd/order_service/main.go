@@ -32,6 +32,13 @@ func main() {
 		logger.Warn("init mq failed", "err", err)
 	}
 
+	// 声明基础交换机
+	if mqPool != nil {
+		if err := mqPool.EnsureBaseTopology(); err != nil {
+			logger.Warn("ensure exchange failed", "err", err)
+		}
+	}
+
 	orderService := service.NewOrderServiceWithMQ(orderDao, mqPool)
 	grpcServer := grpc.NewServer()
 	reflection.Register(grpcServer)

@@ -43,7 +43,7 @@ func main() {
 	}
 	productDao := dao.NewProductDao(db, rdb)
 
-	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, queueOrderCanceled, "order.canceled", "seckill.exchange", true, 1)
+	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, queueOrderCanceled, "order.canceled", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch)
 	if err != nil {
 		logger.Fatal("init consumer channel failed", "err", err)
 	}

@@ -22,7 +22,7 @@ var ErrOrderStatusChanged = errors.New("订单状态已变更")
 
 // CreateOrder 创建订单
 func (d *OrderDao) CreateOrder(ctx context.Context, order *model.Order) error {
-	
+
 	return d.db.WithContext(ctx).Create(order).Error
 }
 
@@ -31,7 +31,12 @@ func (d *OrderDao) CreateOrdersBatch(ctx context.Context, orders []*model.Order)
 	if len(orders) == 0 {
 		return nil
 	}
-	return d.db.WithContext(ctx).CreateInBatches(orders, len(orders)).Error
+	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).CreateInBatches(orders, len(orders)).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // GetOrderByID 根据ID获取订单
@@ -67,29 +72,26 @@ func (d *OrderDao) GetUserOrders(ctx context.Context, userID int64, page, pageSi
 }
 
 // UpdateOrderStatus 更新订单状态
-func (d *OrderDao) UpdateOrderStatus(ctx context.Context, orderID int64, status int32) error {
-	return d.db.WithContext(ctx).Model(&model.Order{}).Where("id = ?", orderID).Update("status", status).Error
-}
-
-// CancelOrder 取消订单
-func (d *OrderDao) CancelOrder(ctx context.Context, orderID, userID int64) error {
+func (d *OrderDao) UpdateOrderStatus(ctx context.Context, orderID int64, fromStatus, toStatus int32) error {
 	result := d.db.WithContext(ctx).Model(&model.Order{}).
-		Where("id = ? AND user_id = ? AND status = ? ", orderID, userID, model.OrderStatusPending).
-		Update("status", model.OrderStatusCancelled)
+		Where("id = ? AND status = ?", orderID, fromStatus).
+		Update("status", toStatus)
 
 	if result.Error != nil {
 		return result.Error
 	}
-
 	if result.RowsAffected == 0 {
-		return ErrOrderStatusChanged
+		return ErrOrderStatusChanged // 统一错误类型
 	}
 	return nil
 }
 
+// CancelOrder 取消订单
+func (d *OrderDao) CancelOrder(ctx context.Context, orderID int64) error {
+	return d.UpdateOrderStatus(ctx, orderID, model.OrderStatusPending, model.OrderStatusCancelled)
+}
+
 // PayOrder 支付订单（仅允许待支付 -> 已支付）
-func (d *OrderDao) PayOrder(ctx context.Context, orderID, userID int64) error {
-	return d.db.WithContext(ctx).Model(&model.Order{}).
-		Where("id = ? AND user_id = ? AND status = ?", orderID, userID, model.OrderStatusPending).
-		Update("status", model.OrderStatusPaid).Error
+func (d *OrderDao) PayOrder(ctx context.Context, orderID int64) error {
+	return d.UpdateOrderStatus(ctx, orderID, model.OrderStatusPending, model.OrderStatusPaid)
 }

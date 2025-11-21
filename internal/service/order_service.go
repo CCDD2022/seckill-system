@@ -26,7 +26,7 @@ type orderCanceledEvent struct {
 	Quantity   int32  `json:"quantity"`
 }
 
-const orderCanceledQueue = "order.canceled"
+const orderCanceledKey = "order.canceled"
 
 type OrderService struct {
 	orderDao *dao.OrderDao
@@ -158,7 +158,7 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 	}
 
 	// 状态改为Canceled
-	err := s.orderDao.CancelOrder(ctx, req.OrderId, req.UserId)
+	err := s.orderDao.CancelOrder(ctx, req.OrderId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &order.CancelOrderResponse{
@@ -174,9 +174,9 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 
 	// 发布取消事件（生产者池异步发布，不等待确认）
 	if s.mqPool != nil {
+		// 使用确定性幂等ID（不包含时间）避免重复取消产生不同事件ID
 		evt := orderCanceledEvent{
-			// 订单号 + 商品ID + 用户ID 组成幂等事件ID
-			EventID:    generateEventID(req.OrderId, ord.ProductID, req.UserId),
+			EventID:    deterministicEventID(req.OrderId, ord.ProductID, req.UserId, "cancel"),
 			OccurredAt: time.Now().Unix(),
 			OrderID:    req.OrderId,
 			UserID:     req.UserId,
@@ -184,10 +184,11 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			Quantity:   ord.Quantity,
 		}
 		if b, mErr := json.Marshal(evt); mErr == nil {
-			if err := s.mqPool.PublishAsync("", orderCanceledQueue, b); err != nil {
+			// 使用事件ID作为 AMQP MessageId，实现跨队列幂等追踪
+			if err := s.mqPool.PublishAsyncWithID("seckill.exchange", orderCanceledKey, b, evt.EventID); err != nil {
 				logger.Warn("订单取消事件发布失败", "order_id", req.OrderId, "err", err)
 			} else {
-				logger.Info("订单取消事件已发布", "order_id", req.OrderId, "product_id", ord.ProductID, "qty", ord.Quantity)
+				logger.Info("订单取消事件已发布", "order_id", req.OrderId, "product_id", ord.ProductID, "qty", ord.Quantity, "event_id", evt.EventID)
 			}
 		} else {
 			logger.Warn("订单取消事件序列化失败", "order_id", req.OrderId, "err", mErr)
@@ -202,14 +203,31 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 
 // PayOrder 支付订单（模拟）
 func (s *OrderService) PayOrder(ctx context.Context, req *order.PayOrderRequest) (*order.PayOrderResponse, error) {
-	// 仅允许 待支付 -> 已支付
-	if err := s.orderDao.PayOrder(ctx, req.OrderId, req.UserId); err != nil {
+
+	ord, err := s.orderDao.GetOrderByID(ctx, req.OrderId)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &order.PayOrderResponse{Code: e.ERROR_NOT_EXIST, Message: "订单不存在"}, nil
+		}
+		return &order.PayOrderResponse{Code: e.ERROR, Message: "查询订单失败"}, err
+	}
+	if ord.UserID != req.UserId {
+		return &order.PayOrderResponse{Code: e.ERROR, Message: "无权支付该订单"}, nil
+	}
+	if ord.Status != model.OrderStatusPending {
+		return &order.PayOrderResponse{Code: e.ERROR_ORDER_STATUS_CHANGED, Message: e.GetMsg(e.ERROR_ORDER_STATUS_CHANGED)}, nil
+	}
+
+	if err := s.orderDao.PayOrder(ctx, req.OrderId); err != nil {
+		if errors.Is(err, dao.ErrOrderStatusChanged) {
+			return &order.PayOrderResponse{Code: e.ERROR_ORDER_STATUS_CHANGED, Message: e.GetMsg(e.ERROR_ORDER_STATUS_CHANGED)}, nil
+		}
 		return &order.PayOrderResponse{Code: e.ERROR, Message: "支付失败"}, err
 	}
 	return &order.PayOrderResponse{Code: e.SUCCESS, Message: "支付成功"}, nil
 }
 
 // generateEventID 生成简易幂等事件ID（避免依赖外部库）
-func generateEventID(orderID, productID, userID int64) string {
-	return fmt.Sprintf("%d-%d-%d-%d", orderID, productID, userID, time.Now().UnixNano())
+func deterministicEventID(orderID, productID, userID int64, action string) string {
+	return fmt.Sprintf("%d-%d-%d-%s", orderID, productID, userID, action)
 }

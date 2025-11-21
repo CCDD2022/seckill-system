@@ -70,17 +70,12 @@ type Database struct {
 
 // MQConfig RabbitMQ配置
 type MQConfig struct {
-	Host            string `yaml:"host"`
-	Port            int    `yaml:"port"`
-	User            string `yaml:"user"`
-	Password        string `yaml:"password"`
-	ChannelPoolSize int    `yaml:"channel_pool_size" mapstructure:"channel_pool_size"`
-	// Consumer prefetch for RabbitMQ
-	ConsumerPrefetch int `yaml:"consumer_prefetch" mapstructure:"consumer_prefetch"`
-	// Order batch insert size
-	OrderBatchSize int `yaml:"order_batch_size" mapstructure:"order_batch_size"`
-	// Order batch flush interval in ms
-	OrderBatchIntervalMs int `yaml:"order_batch_interval_ms" mapstructure:"order_batch_interval_ms"`
+	Host             string `yaml:"host"`
+	Port             int    `yaml:"port"`
+	User             string `yaml:"user"`
+	Password         string `yaml:"password"`
+	ChannelPoolSize  int    `yaml:"channel_pool_size" mapstructure:"channel_pool_size"`
+	ConsumerPrefetch int    `yaml:"consumer_prefetch" mapstructure:"consumer_prefetch"`
 }
 
 // Config 总配置结构体，嵌套所有子配置
@@ -129,10 +124,10 @@ func InitConfig(configPath string) (*Config, error) {
 // LoadConfig 加载配置文件并返回配置对象
 // 这个函数简化了配置加载过程，默认加载config.yaml
 func LoadConfig() (*Config, error) {
-	cfg, err := InitConfig("config/config.yaml")
+	cfg, err := InitConfig("./config/config.yaml")
 	if err != nil {
 		// 尝试当前目录
-		cfg, err = InitConfig("../../config/config.yaml")
+		cfg, err = InitConfig("./config.yaml")
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %v", err)
 		}
@@ -165,12 +160,6 @@ func applyRateLimitDefaults(cfg *Config) {
 		cfg.MQ.ChannelPoolSize = 8
 	}
 	if cfg.MQ.ConsumerPrefetch <= 0 {
-		cfg.MQ.ConsumerPrefetch = 500
-	}
-	if cfg.MQ.OrderBatchSize <= 0 {
-		cfg.MQ.OrderBatchSize = 200
-	}
-	if cfg.MQ.OrderBatchIntervalMs <= 0 {
-		cfg.MQ.OrderBatchIntervalMs = 100
+		cfg.MQ.ConsumerPrefetch = 1
 	}
 }

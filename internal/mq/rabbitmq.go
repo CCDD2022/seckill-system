@@ -15,7 +15,7 @@ import (
 	"github.com/streadway/amqp"
 )
 
-type channelWrapper struct {
+type ChannelWrapper struct {
 	ch *amqp.Channel
 	// 只读通道  接收发布确认结果(来自rabbitMQ服务器)
 	confirms <-chan amqp.Confirmation
@@ -24,7 +24,7 @@ type channelWrapper struct {
 // Pool 维护一个连接与一组生产者通道（带异步确认处理）。
 type Pool struct {
 	conn     *amqp.Connection
-	channels chan *channelWrapper
+	channels chan *ChannelWrapper
 	size     int
 	mu       sync.Mutex // 防止Close被并发调用
 	closed   bool
@@ -44,7 +44,7 @@ func Init(cfg *config.MQConfig) (*Pool, error) {
 	}
 
 	// 创建通道池
-	p := &Pool{conn: conn, channels: make(chan *channelWrapper, size), size: size}
+	p := &Pool{conn: conn, channels: make(chan *ChannelWrapper, size), size: size}
 	for i := 0; i < size; i++ {
 		cw, err := p.createChannelWrapper()
 		if err != nil {
@@ -58,7 +58,7 @@ func Init(cfg *config.MQConfig) (*Pool, error) {
 }
 
 // createChannelWrapper 创建一个带异步确认处理的生产者通道包装
-func (p *Pool) createChannelWrapper() (*channelWrapper, error) {
+func (p *Pool) createChannelWrapper() (*ChannelWrapper, error) {
 	ch, err := p.conn.Channel()
 	if err != nil {
 		return nil, err
@@ -80,16 +80,16 @@ func (p *Pool) createChannelWrapper() (*channelWrapper, error) {
 			}
 		}
 	}(conf)
-	return &channelWrapper{ch: ch, confirms: conf}, nil
+	return &ChannelWrapper{ch: ch, confirms: conf}, nil
 }
 
 // Acquire 获取一个可用生产者ChannelWrapper
-func (p *Pool) Acquire() *channelWrapper {
+func (p *Pool) Acquire() *ChannelWrapper {
 	return <-p.channels
 }
 
 // Release 归还生产者ChannelWrapper到池中
-func (p *Pool) Release(cw *channelWrapper) {
+func (p *Pool) Release(cw *ChannelWrapper) {
 	if cw == nil || p.closed {
 		return
 	}
@@ -129,19 +129,16 @@ func (p *Pool) EnsureBaseTopology() error {
 	return nil
 }
 
-// PublishAsync 使用池中通道进行异步发布（不等待确认）
-func (p *Pool) PublishAsync(exchange, key string, body []byte) error {
-	// 接收exchange 路由键和消息体
-
-	// 获取一个通道
+// PublishAsyncWithID 与 PublishAsync 类似，但可设置 AMQP MessageId 供消费者幂等去重
+func (p *Pool) PublishAsyncWithID(exchange, key string, body []byte, messageID string) error {
 	cw := p.Acquire()
 	defer p.Release(cw)
-	// 在该通道上发送消息到rabbitMQ服务器
 	return cw.ch.Publish(exchange, key, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
+		MessageId:    messageID,
 	})
 }
 

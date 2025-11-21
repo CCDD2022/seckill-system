@@ -265,7 +265,7 @@ services:
       context: .
       dockerfile: ./Dockerfile
       args:
-        SERVICE_NAME: order_consumer
+        SERVICE_NAME: order_create_consumer
     container_name: seckill-order-consumer
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
