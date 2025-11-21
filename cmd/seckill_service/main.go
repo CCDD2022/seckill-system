@@ -61,6 +61,9 @@ func main() {
 	// 创建 gRPC 服务器
 	grpcServer := grpc.NewServer(
 		grpc.MaxConcurrentStreams(10000),
+		grpc.NumStreamWorkers(100),  
+		grpc.InitialWindowSize(1 << 24), // 16MB
+        grpc.InitialConnWindowSize(1 << 24),
 		grpc.ConnectionTimeout(10*time.Second),
 	)
 	reflection.Register(grpcServer)

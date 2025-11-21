@@ -144,7 +144,6 @@ func (dao *ProductDao) ListProductsFromDBWithStatus(ctx context.Context, offset,
 // applyStatusFilter 应用状态筛选条件
 func (dao *ProductDao) applyStatusFilter(query *gorm.DB, statusFilter model.ProductSeckillStatus) *gorm.DB {
 	now := time.Now().Format(time.DateTime)
-	fmt.Println(now)
 
 	switch statusFilter {
 	case model.SeckillStatusActive:
@@ -166,6 +165,7 @@ func (dao *ProductDao) ClearProductCache(ctx context.Context, id int64) {
 
 // DeductStock 优化 - Lua脚本返回状态码，避免额外Redis调用
 func (dao *ProductDao) DeductStock(ctx context.Context, productID int64, quantity int32) error {
+
 	redisKey := getProductStockKey(productID)
 
 	luaScript := `
