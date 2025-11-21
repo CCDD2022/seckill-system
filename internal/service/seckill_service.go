@@ -51,32 +51,31 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	userID := req.UserId
 	quantity := req.Quantity
 
-	// 1. 使用分布式锁（防重复下单）；短超时，避免阻塞
-	// userid + productid 作为锁的key 防止重复下单
-	lockKey := fmt.Sprintf("seckill:lock:user:%d:product:%d", userID, productID)
-	lctx, lcancel := context.WithTimeout(ctx, 80*time.Millisecond)
-	defer lcancel()
-	locked, err := s.redisDB.SetNX(lctx, lockKey, "1", 10*time.Second).Result()
+	// 1. 使用参与集合去重，避免SetNX+Del的两次往返
+	//    SADD 返回1表示首次参与，0表示已参与
+	//    在后续失败（发布消息或其他环节）时再进行SREM，允许重试
+	joinKey := fmt.Sprintf("seckill:joined:product:%d", productID)
+	jctx, jcancel := context.WithTimeout(ctx, 80*time.Millisecond)
+	defer jcancel()
+	added, err := s.redisDB.SAdd(jctx, joinKey, userID).Result()
+	s.redisDB.Expire(jctx, joinKey, 24*time.Hour)
 	if err != nil {
-		return &seckill.SeckillResponse{
-			Success: false,
-			Message: "系统繁忙，请稍后再试",
-		}, err
+		return &seckill.SeckillResponse{Success: false, Message: "系统繁忙，请稍后再试"}, err
 	}
-	if !locked {
-		return &seckill.SeckillResponse{
-			Success: false,
-			Message: "您已参与过该商品的秒杀，请勿重复下单",
-		}, nil
+	if added == 0 {
+		return &seckill.SeckillResponse{Success: false, Message: "您已参与过该商品的秒杀，请勿重复下单"}, nil
 	}
-	defer func() {
+	// 仅在需要允许重试的失败场景下移除参与标记
+	removeJoinMark := func() {
 		c, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
-		_ = s.redisDB.Del(c, lockKey).Err()
-	}()
+		_ = s.redisDB.SRem(c, joinKey, userID).Err()
+	}
 
 	// 2. 预扣减库存（统一走DAO的Lua脚本，保证键名一致与行为一致）
 	if err := s.productDao.DeductStock(ctx, productID, quantity); err != nil {
+		// 库存失败，移除参与标记，允许用户重试
+		removeJoinMark()
 		return &seckill.SeckillResponse{Success: false, Message: err.Error()}, nil
 	}
 
@@ -85,19 +84,20 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	// 		StockLogMessage{ProductID: productID, Delta: -quantity, Reason: "seckill_deduct", TimeUnix: time.Now().Unix()})
 
 	// 3. 获取商品信息计算总价
-	pctx, pcancel := context.WithTimeout(ctx, 150*time.Millisecond)
-	product, err := s.productDao.GetProductByID(pctx, productID)
+	pctx, pcancel := context.WithTimeout(ctx, 120*time.Millisecond)
+	price, err := s.productDao.GetProductPrice(pctx, productID)
 	pcancel()
 	if err != nil {
 		// 回滚库存（DAO归还保证一致键名与逻辑）
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
+		// 获取价格失败，移除参与标记，允许重试
+		removeJoinMark()
 		return &seckill.SeckillResponse{
 			Success: false,
 			Message: "获取商品信息失败",
 		}, err
 	}
-
-	totalPrice := product.Price * float64(quantity)
+	totalPrice := price * float64(quantity)
 
 	// 4. 发送消息到队列进行异步订单创建
 	msg := SeckillMessage{
@@ -111,6 +111,8 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	if err != nil {
 		// 回滚库存
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
+		// 允许重试
+		removeJoinMark()
 		return &seckill.SeckillResponse{
 			Success: false,
 			Message: "创建订单消息失败",
@@ -124,6 +126,8 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	// 发布创建订单事件（异步Confirm，提高吞吐），携带 MessageId
 	if err := s.mqPool.PublishAsyncWithID(mqExchange, "order.create", msgBody, msgID); err != nil {
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
+		// 发布失败，允许重试
+		removeJoinMark()
 		// _ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_fail", TimeUnix: time.Now().Unix()})
 		return &seckill.SeckillResponse{Success: false, Message: "秒杀失败，请重试"}, err
 	}

@@ -30,6 +30,7 @@ func NewProductDao(db *gorm.DB, redis redis.UniversalClient) *ProductDao {
 const (
 	productStockKeyTemplate = "stock:%d"
 	productCacheKeyTemplate = "product:%d"
+	productPriceKeyTemplate = "product_price:%d"
 	cacheExpiration         = 30 * time.Minute
 	productDirtySetKey      = "product:dirty"
 )
@@ -42,6 +43,11 @@ func getProductCacheKey(id int64) string {
 // getProductStockKey 生成库存缓存键
 func getProductStockKey(id int64) string {
 	return fmt.Sprintf(productStockKeyTemplate, id)
+}
+
+// getProductPriceKey 生成价格缓存键
+func getProductPriceKey(id int64) string {
+	return fmt.Sprintf(productPriceKeyTemplate, id)
 }
 
 // GetProductByID 根据ID查询商品（带缓存）
@@ -161,6 +167,27 @@ func (dao *ProductDao) applyStatusFilter(query *gorm.DB, statusFilter model.Prod
 func (dao *ProductDao) ClearProductCache(ctx context.Context, id int64) {
 	cacheKey := getProductCacheKey(id)
 	dao.redis.Del(ctx, cacheKey)
+}
+
+// GetProductPrice 轻量获取商品价格（优先Redis，小Key，避免反序列化整对象）
+func (dao *ProductDao) GetProductPrice(ctx context.Context, id int64) (float64, error) {
+	priceKey := getProductPriceKey(id)
+	if val, err := dao.redis.Get(ctx, priceKey).Result(); err == nil {
+		if f, convErr := strconv.ParseFloat(val, 64); convErr == nil {
+			return f, nil
+		}
+		// 解析失败则删除键，走DB
+		_ = dao.redis.Del(ctx, priceKey).Err()
+	}
+
+	// 从数据库仅查询价格
+	var p model.Product
+	if err := dao.db.WithContext(ctx).Select("id", "price").First(&p, "id = ?", id).Error; err != nil {
+		return 0, err
+	}
+	// 回写价格缓存，较长TTL（价格非高频变动），具体变更时由更新路径清缓存或重置
+	_ = dao.redis.Set(ctx, priceKey, fmt.Sprintf("%f", p.Price), 20*time.Minute).Err()
+	return p.Price, nil
 }
 
 // DeductStock 优化 - Lua脚本返回状态码，避免额外Redis调用
