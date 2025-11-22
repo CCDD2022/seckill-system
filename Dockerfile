@@ -25,7 +25,7 @@ ARG SERVICE_NAME
 
 # 构建二进制文件
 # 把编译后的可执行文件 放到/app/service目录下
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/service ./cmd/${SERVICE_NAME}
+RUN CGO_ENABLED=0 GOOS=linux go build -p 2 -o /app/service ./cmd/${SERVICE_NAME}
 
 # Runtime stage
 FROM alpine:latest
