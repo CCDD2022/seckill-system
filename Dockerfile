@@ -2,6 +2,7 @@
 FROM golang:1.21-alpine AS builder
 
 # 设置工作目录
+# 源文件在/build目录下
 WORKDIR /build
 
 # 安装必要的构建工具
@@ -17,6 +18,7 @@ COPY . .
 ARG SERVICE_NAME
 
 # 构建二进制文件
+# 把编译后的可执行文件 放到/app/service目录下
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/service ./cmd/${SERVICE_NAME}
 
 # Runtime stage
@@ -34,6 +36,7 @@ WORKDIR /app
 COPY --from=builder /app/service .
 
 # 复制配置文件
+# 把宿主的config/config.docker.yaml 复制到我的 /app/config/config.yaml  满足程序的读取需求
 COPY config/config.docker.yaml /app/config/config.yaml
 
 # 运行服务

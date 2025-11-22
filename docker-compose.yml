@@ -1,9 +1,7 @@
-version: "3.8"
-
 # 生产环境编排：Redis 与 RabbitMQ 由宿主机自启动，前端已由 Nginx 提供静态资源与 /api 反代。
 services:
   mysql:
-    image: mysql:8.0
+    image: mysql:8.0.19
     container_name: mysql8019
     restart: unless-stopped
     environment:
@@ -30,7 +28,7 @@ services:
       args: { SERVICE_NAME: auth_service }
     container_name: seckill-auth-service
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -46,7 +44,7 @@ services:
       args: { SERVICE_NAME: user_service }
     container_name: seckill-user-service
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -62,7 +60,7 @@ services:
       args: { SERVICE_NAME: product_service }
     container_name: seckill-product-service
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -78,7 +76,7 @@ services:
       args: { SERVICE_NAME: seckill_service }
     container_name: seckill-seckill-service
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -94,7 +92,7 @@ services:
       args: { SERVICE_NAME: order_service }
     container_name: seckill-order-service
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -110,7 +108,7 @@ services:
       args: { SERVICE_NAME: order_create_consumer }
     container_name: seckill-order-create-consumer
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -126,7 +124,7 @@ services:
       args: { SERVICE_NAME: order_cancel_consumer }
     container_name: seckill-order-cancel-consumer
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -142,7 +140,7 @@ services:
       args: { SERVICE_NAME: stock_reconciler }
     container_name: seckill-stock-reconciler
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       mysql:
         condition: service_healthy
@@ -158,12 +156,13 @@ services:
       args: { SERVICE_NAME: api_gateway }
     container_name: seckill-api-gateway
     environment:
-      - CONFIG_PATH=/app/config/config.docker.yaml
+      - CONFIG_PATH=/app/config/config.yaml
     depends_on:
       - auth-service
       - user-service
       - product-service
       - seckill-service
+      - order-service
     extra_hosts: 
       - "host.docker.internal:host-gateway"
     ports:
