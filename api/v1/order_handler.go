@@ -141,7 +141,7 @@ func (h *OrderHandler) PayOrder(c *gin.Context) {
 func (h *OrderHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	orders := rg.Group("/orders")
 	{
-		orders.GET("", h.ListOrders)
+		orders.GET("/my", h.ListOrders)
 		orders.GET("/:id", h.GetOrder)
 		orders.POST("/:id/cancel", h.CancelOrder)
 		orders.POST("/:id/pay", h.PayOrder)
