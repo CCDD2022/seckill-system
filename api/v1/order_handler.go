@@ -139,11 +139,10 @@ func (h *OrderHandler) PayOrder(c *gin.Context) {
 
 // RegisterRoutes 注册订单相关路由
 func (h *OrderHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	orders := rg.Group("/orders")
-	{
-		orders.GET("/my", h.ListOrders)
-		orders.GET("/:id", h.GetOrder)
-		orders.POST("/:id/cancel", h.CancelOrder)
-		orders.POST("/:id/pay", h.PayOrder)
-	}
+
+	rg.GET("/my", h.ListOrders)
+	rg.GET("/:id", h.GetOrder)
+	rg.POST("/:id/cancel", h.CancelOrder)
+	rg.POST("/:id/pay", h.PayOrder)
+
 }
