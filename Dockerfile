@@ -1,8 +1,14 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25.3-alpine AS builder
 
 # 设置工作目录
 WORKDIR /build
+
+# sed流编辑器  原地替换文件内容 把官方源换为中科大镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories
+
+# 设置 Go 模块代理（国内镜像）
+ENV GOPROXY=https://goproxy.cn,direct
 
 # 安装必要的构建工具
 RUN apk add --no-cache git
