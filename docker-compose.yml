@@ -80,6 +80,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    ports:
+      - "50053:50053"
     extra_hosts: 
       - "host.docker.internal:host-gateway"
     networks: [seckill-net]
