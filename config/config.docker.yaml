@@ -1,71 +1,49 @@
-# 服务器配置 (Docker环境)
+# 生产环境容器内使用的配置（Docker）。
+# 保留本地开发用的 config.yaml 不动；部署时通过 CONFIG_PATH 指向本文件。
 server:
   port: 8080
-  mode: release # debug, release, test
+  mode: release
   read_timeout: 60
   write_timeout: 60
 
-# 日志配置
 log:
   level: info
   format: json
-  output: console # 在Docker中输出到控制台
+  output: console
   file_path: ./logs/app.log
-  max_size: 100 # MB
+  max_size: 100
   max_backups: 3
-  max_age: 30 # days
+  max_age: 30
 
-# 服务配置（使用容器名称）
 services:
-  api_gateway:
-    host: 0.0.0.0
-    port: 8080
+  api_gateway: { host: 0.0.0.0, port: 8080 }
+  user_service:   { host: user-service,   port: 50051 }
+  product_service: { host: product-service, port: 50052 }
+  auth_service:   { host: auth-service,   port: 50053 }
+  seckill_service: { host: seckill-service, port: 50054 }
+  order_service:  { host: order-service,  port: 50055 }
 
-  user_service:
-    host: user-service
-    port: 50051
-
-  product_service:
-    host: product-service
-    port: 50052
-
-  auth_service:
-    host: auth-service
-    port: 50053
-
-  seckill_service:
-    host: seckill-service
-    port: 50054
-
-  order_service:
-    host: order-service
-    port: 50055
-
-# 数据库配置（使用Docker容器名称）
 database:
   mysql:
-    host: mysql
+    host: mysql8019
     port: 3306
     user: root
-    password: root123
+    password: root1234
     dbname: seckill_shop
-    max_open_conns: 400
-    max_idle_conns: 100
-
+    max_open_conns: 600
+    max_idle_conns: 300
   redis:
-    host: redis
+    host: host.docker.internal
     port: 6379
-    password: ""
+    password: 123456
     db: 0
 
-# JWT配置
 jwt:
-  secret: "your-secret-key-change-in-production"
+  secret: "my_best_seckill_shop"
   expire_hours: 72
 
-# RabbitMQ配置（使用Docker容器名称）
 mq:
-  host: rabbitmq
+  host: host.docker.internal
   port: 5672
   user: guest
   password: guest
@@ -75,12 +53,8 @@ mq:
   order_batch_interval_ms: 80
 
 rate_limits:
-  global:
-    rps: 20000
-    burst: 40000
-  seckill:
-    rps: 5000
-    burst: 10000
-  order:
-    rps: 8000
-    burst: 16000
+  global:  { rps: 20000, burst: 40000 }
+  seckill: { rps: 5000,  burst: 10000 }
+  order:   { rps: 8000,  burst: 16000 }
+
+

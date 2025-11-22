@@ -13,8 +13,7 @@ RUN go mod download
 
 # 复制源代码
 COPY . .
-di
-# 构建参数
+# 构建参数（由 docker-compose 传入）
 ARG SERVICE_NAME
 
 # 构建二进制文件
@@ -35,15 +34,7 @@ WORKDIR /app
 COPY --from=builder /app/service .
 
 # 复制配置文件
-COPY config/ /app/config/
-
-# 暴露端口（根据服务动态变化）
-EXPOSE 8080
-EXPOSE 50051
-EXPOSE 50052
-EXPOSE 50053
-EXPOSE 50054
-EXPOSE 50055
+COPY config/config.docker.yaml /app/config/config.yaml
 
 # 运行服务
 CMD ["./service"]

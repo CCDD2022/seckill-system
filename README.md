@@ -54,56 +54,65 @@
 *   Redis 7+
 *   RabbitMQ 3+
 
-### 方式一：Docker Compose 启动（推荐）
+### 生产环境一键部署
 
-这是最简单的启动方式，它会自动构建并启动所有服务（包括 Go 应用、MySQL、Redis、RabbitMQ）。
+仅保留生产模式：Redis 与 RabbitMQ 在宿主机自启动，Compose 负责 MySQL 与全部 Go 微服务。
 
-1.  **克隆项目到本地**
-    ```bash
-    git clone https://github.com/CCDD2022/seckill-system.git
-    cd seckill-system
-    ```
+#### 步骤 1 克隆项目
 
-2.  **启动所有服务**
-    ```bash
-    docker-compose up --build
-    ```
+```bash
+git clone https://github.com/CCDD2022/seckill-system.git
+cd seckill-system/backend
+```
 
-3.  **服务状态检查**
-    *   API Gateway: `http://localhost:8080`
-    *   RabbitMQ 管理后台: `http://localhost:15672` (guest/guest)
-    *   MySQL: `localhost:3306` (root/root123)
-    *   Redis Cluster (示例本地端口): `7001-7006`
+#### 步骤 2 构建并启动
 
-### 方式二：本地开发启动
+```bash
+docker compose up -d --build
+```
 
-1.  **克隆项目到本地**
-    ```bash
-    git clone https://github.com/CCDD2022/seckill-system.git
-    cd seckill-system
-    ```
+#### 步骤 3 检查服务
 
-2.  **安装依赖**
-    ```bash
-    go mod download
-    ```
+```bash
+docker compose ps
+```
 
-3.  **配置环境 (Cluster 专用)**
-    ```bash
-    cp config/config.yaml.example config/config.yaml
-    # 修改 config/config.yaml 中的 MySQL / RabbitMQ / Redis Cluster 地址 (redis addrs 列表)
-    ```
+#### 步骤 4 Nginx 前端与反代
 
-4.  **初始化数据库**
-    ```bash
-    # 执行 scripts/init.sql 中的 SQL 语句
-    mysql -u root -p < scripts/init.sql
-    ```
+确保 `/api/` 指向本机 `8080`。
 
-5.  **启动各个服务**（需要在不同的终端窗口中运行）
-    ```bash
-    # 终端1: 启动 Auth Service
-    go run cmd/auth_service/main.go
+### 配置说明
+
+环境变量 `CONFIG_PATH=/app/config/config.docker.yaml` 在容器内指向生产配置；本地开发继续使用 `config/config.yaml`。
+
+RabbitMQ 注意：默认 `guest/guest` 仅允许从 127.0.0.1 访问，容器内通过 `host.docker.internal` 会被视为远程。
+请在宿主机 RabbitMQ 中创建生产账号，例如：
+```bash
+# 假设已安装 rabbitmqctl
+rabbitmqctl add_user seckill_prod strong_password_here
+rabbitmqctl set_user_tags seckill_prod administrator
+rabbitmqctl set_permissions -p / seckill_prod ".*" ".*" ".*"
+```
+如果创建了新的 RabbitMQ 用户，请修改 `config/config.docker.yaml` 中 `mq.user` 与 `mq.password`（开发环境用本地 `config.yaml` 另行调整）。
+
+Nginx 示例（已部署，复述要点）:
+```nginx
+server {
+  listen 80;
+  server_name 175.27.226.213;
+  location / { root /home/cwx/seckill-system/fronted/dist; index index.html; try_files $uri $uri/ /index.html; gzip on; gzip_types text/plain text/css application/javascript application/json; }
+  location /api/ { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
+  location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ { root /home/cwx/seckill-system/fronted/dist; expires 30d; add_header Cache-Control "public, immutable"; access_log off; }
+}
+```
+
+配置文件说明：
+* `config.yaml` —— 本地非 Docker 开发使用（localhost 等）。
+* `config.docker.yaml` —— 生产容器使用（容器名与 host.docker.internal）。
+
+### （可选）本地源码调试
+
+仍可直接 `go run cmd/<service>/main.go` 启动单个服务，需自行提供外部依赖地址。
     
     # 终端2: 启动 User Service
     go run cmd/user_service/main.go
@@ -126,6 +135,7 @@
 项目成功启动后，您可以使用以下 API 进行测试：
 
 #### 1. 用户注册
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
@@ -138,6 +148,7 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
 ```
 
 #### 2. 用户登录
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
@@ -148,12 +159,14 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 ```
 
 #### 3. 获取商品列表（需要登录）
+
 ```bash
 curl -X GET "http://localhost:8080/api/v1/products?page=1&page_size=10" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
 #### 4. 执行秒杀（需要登录）
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/seckill/execute \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
@@ -167,9 +180,9 @@ curl -X POST http://localhost:8080/api/v1/seckill/execute \
 ### 测试账户
 
 系统已预置测试账户（密码均为 `password123`）：
-- `testuser1` / `password123`
-- `testuser2` / `password123`
-- `testuser3` / `password123`
+* `testuser1` / `password123`
+* `testuser2` / `password123`
+* `testuser3` / `password123`
 
 ##  项目结构
 
@@ -183,7 +196,7 @@ seckill-shop/
 ├── proto/                # Protocol Buffers (.proto 文件)
 ├── scripts/              # 脚本文件 (如 SQL 初始化)
 ├── docs/                 # 架构/压测/部署文档
-└── docker-compose.yml    # 包含 Redis Cluster, RabbitMQ, MySQL 与服务编排
+└── docker-compose.yml    # 生产编排（MySQL + 微服务，外部 Redis/RabbitMQ）
 ## Redis Cluster 初始化指引
 
 项目已提供基于 Docker Compose 的 3 主 3 从拓扑（服务名 `redis-node-1` .. `redis-node-6`）。`redis-cluster-init` 服务在启动后自动执行：

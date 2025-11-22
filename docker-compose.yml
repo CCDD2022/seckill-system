@@ -1,310 +1,179 @@
 version: "3.8"
 
+# 生产环境编排：Redis 与 RabbitMQ 由宿主机自启动，前端已由 Nginx 提供静态资源与 /api 反代。
 services:
-  # MySQL数据库
   mysql:
     image: mysql:8.0
-    container_name: seckill-mysql
+    container_name: mysql8019
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_ROOT_PASSWORD: root1234
       MYSQL_DATABASE: seckill_shop
-      MYSQL_CHARACTER_SET_SERVER: utf8mb4
-      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - seckill-network
+      - /home/cwx/my.conf:/etc/mysql/conf.d/my.cnf:ro
     healthcheck:
-      test:
-        [
-          "CMD",
-          "mysqladmin",
-          "ping",
-          "-h",
-          "localhost",
-          "-u",
-          "root",
-          "-proot123",
-        ]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot1234"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [seckill-net]
 
-  # Redis Cluster 3主3从 (示例) 端口映射 7001-7006
-  redis-node-1:
-    image: redis:7-alpine
-    container_name: redis-node-1
-    ports:
-      - "7001:6379"
-    command:
-      [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--appendonly",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-        "--cluster-node-timeout",
-        "5000",
-      ]
-    networks: [seckill-network]
-  redis-node-2:
-    image: redis:7-alpine
-    container_name: redis-node-2
-    ports:
-      - "7002:6379"
-    command:
-      [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--appendonly",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-        "--cluster-node-timeout",
-        "5000",
-      ]
-    networks: [seckill-network]
-  redis-node-3:
-    image: redis:7-alpine
-    container_name: redis-node-3
-    ports:
-      - "7003:6379"
-    command:
-      [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--appendonly",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-        "--cluster-node-timeout",
-        "5000",
-      ]
-    networks: [seckill-network]
-  redis-node-4:
-    image: redis:7-alpine
-    container_name: redis-node-4
-    ports:
-      - "7004:6379"
-    command:
-      [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--appendonly",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-        "--cluster-node-timeout",
-        "5000",
-      ]
-    networks: [seckill-network]
-  redis-node-5:
-    image: redis:7-alpine
-    container_name: redis-node-5
-    ports:
-      - "7005:6379"
-    command:
-      [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--appendonly",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-        "--cluster-node-timeout",
-        "5000",
-      ]
-    networks: [seckill-network]
-  redis-node-6:
-    image: redis:7-alpine
-    container_name: redis-node-6
-    ports:
-      - "7006:6379"
-    command:
-      [
-        "redis-server",
-        "--cluster-enabled",
-        "yes",
-        "--appendonly",
-        "yes",
-        "--cluster-config-file",
-        "nodes.conf",
-        "--cluster-node-timeout",
-        "5000",
-      ]
-    networks: [seckill-network]
-
-  # 初始化集群 (一次性) --cluster-replicas 1
-  redis-cluster-init:
-    image: redis:7-alpine
-    container_name: redis-cluster-init
-    depends_on:
-      - redis-node-1
-      - redis-node-2
-      - redis-node-3
-      - redis-node-4
-      - redis-node-5
-      - redis-node-6
-    command: sh -c "sleep 3 && echo 'yes' | redis-cli --cluster create redis-node-1:6379 redis-node-2:6379 redis-node-3:6379 redis-node-4:6379 redis-node-5:6379 redis-node-6:6379 --cluster-replicas 1 && tail -f /dev/null"
-    networks: [seckill-network]
-
-  # RabbitMQ消息队列
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: seckill-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - seckill-network
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Auth Service
   auth-service:
     build:
       context: .
       dockerfile: ./Dockerfile
-      args:
-        SERVICE_NAME: auth_service
+      args: { SERVICE_NAME: auth_service }
     container_name: seckill-auth-service
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
-    ports:
-      - "50053:50053"
     depends_on:
       mysql:
         condition: service_healthy
-    networks:
-      - seckill-network
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
     restart: unless-stopped
 
-  # User Service
   user-service:
     build:
       context: .
       dockerfile: ./Dockerfile
-      args:
-        SERVICE_NAME: user_service
+      args: { SERVICE_NAME: user_service }
     container_name: seckill-user-service
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
-    ports:
-      - "50051:50051"
     depends_on:
       mysql:
         condition: service_healthy
-    networks:
-      - seckill-network
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
     restart: unless-stopped
 
-  # Product Service
   product-service:
     build:
       context: .
       dockerfile: ./Dockerfile
-      args:
-        SERVICE_NAME: product_service
+      args: { SERVICE_NAME: product_service }
     container_name: seckill-product-service
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
-    ports:
-      - "50052:50052"
     depends_on:
       mysql:
         condition: service_healthy
-      redis-cluster-init:
-        condition: service_started
-    networks:
-      - seckill-network
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
     restart: unless-stopped
 
-  # Seckill Service
   seckill-service:
     build:
       context: .
       dockerfile: ./Dockerfile
-      args:
-        SERVICE_NAME: seckill_service
+      args: { SERVICE_NAME: seckill_service }
     container_name: seckill-seckill-service
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
-    ports:
-      - "50054:50054"
     depends_on:
       mysql:
         condition: service_healthy
-      redis-cluster-init:
-        condition: service_started
-      rabbitmq:
-        condition: service_healthy
-    networks:
-      - seckill-network
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
     restart: unless-stopped
 
-  # Order Consumer
-  order-consumer:
+  order-service:
     build:
       context: .
       dockerfile: ./Dockerfile
-      args:
-        SERVICE_NAME: order_create_consumer
-    container_name: seckill-order-consumer
+      args: { SERVICE_NAME: order_service }
+    container_name: seckill-order-service
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
     depends_on:
       mysql:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis-cluster-init:
-        condition: service_started
-    networks:
-      - seckill-network
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
     restart: unless-stopped
 
-  # API Gateway
+  order-create-consumer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: order_create_consumer }
+    container_name: seckill-order-create-consumer
+    environment:
+      - CONFIG_PATH=/app/config/config.docker.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  order-cancel-consumer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: order_cancel_consumer }
+    container_name: seckill-order-cancel-consumer
+    environment:
+      - CONFIG_PATH=/app/config/config.docker.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  stock-reconciler:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: stock_reconciler }
+    container_name: seckill-stock-reconciler
+    environment:
+      - CONFIG_PATH=/app/config/config.docker.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: .
       dockerfile: ./Dockerfile
-      args:
-        SERVICE_NAME: api_gateway
+      args: { SERVICE_NAME: api_gateway }
     container_name: seckill-api-gateway
     environment:
       - CONFIG_PATH=/app/config/config.docker.yaml
-    ports:
-      - "8080:8080"
     depends_on:
       - auth-service
       - user-service
       - product-service
-    networks:
-      - seckill-network
+      - seckill-service
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    networks: [seckill-net]
     restart: unless-stopped
 
 volumes:
   mysql_data:
-  redis_data:
-  rabbitmq_data:
 
 networks:
-  seckill-network:
+  seckill-net:
     driver: bridge
