@@ -1,231 +1,223 @@
 
-# 高并发秒杀商城 (Go-Seckill-Shop)
+# Go 高并发秒杀系统 (Seckill System)
 
-这是一个基于 Go 语言构建的高性能、高并发秒杀商城后端系统。项目采用现代化的 **API Gateway + gRPC 微服务** 架构，旨在模拟并解决真实世界秒杀场景下的高流量和数据一致性挑战。
+🚀 一个在资源受限环境下依然实现稳定高并发、低延迟与数据一致性的秒杀后端。架构：**API Gateway + gRPC 微服务 + Redis 预减库存 + RabbitMQ 异步削峰 + MySQL 持久化 + 定时库存对账**。
 
-##  项目特色
+![License](https://img.shields.io/badge/license-MIT-green) ![Go Version](https://img.shields.io/badge/Go-1.25-blue) ![gRPC](https://img.shields.io/badge/RPC-gRPC-8A2BE2) ![Redis](https://img.shields.io/badge/Cache-Redis-red) ![RabbitMQ](https://img.shields.io/badge/Queue-RabbitMQ-orange)
 
-*   **高性能:** 核心链路采用 `gRPC` + `Protocol Buffers` 进行内部通信，性能远超传统 HTTP/JSON。
-*   **高并发:** 使用 **Redis Cluster** + Lua 原子扣减实现热点库存低延迟处理，结合 **RabbitMQ 发布确认 + 批消费** 做削峰与最终一致。
-*   **高扩展性:** 业务逻辑被拆分为独立的微服务，每个服务都可以独立开发、部署和扩容。
-*   **强一致性:** 通过消息队列的可靠投递和消费者端的数据库事务，确保订单数据的最终一致性。
-*   **现代化架构:** 遵循 Go 社区最佳实践，结构清晰，易于维护和二次开发。
+## 📌 为什么做这个项目 (Problem → Solution → Result)
 
-## ️ 架构设计
+| Problem | Solution | Result |
+|---------|----------|--------|
+| 热门商品秒杀瞬时流量冲击数据库导致超卖与大量行锁竞争 | Redis 原子预减库存 + Lua 脚本 + 单槽键设计 | 请求阶段仅内存+缓存操作，极低延迟，避免 DB 写峰值 |
+| 库存扣减成功但订单写入/消息投递异常造成不一致 | RabbitMQ 发布确认 + 消费端幂等 + 定时对账回补 | 最终一致，无超卖，无重复订单 |
+| 高并发场景下重复/恶意请求刷接口 | JWT 鉴权 + 令牌桶限流 + 幂等键 | 控制入口压力，保护核心库存键 |
+| 大量订单写入造成写放大与慢 SQL | 批量消息消费 + 批量插入/更新 + 连接池调优 | 将写操作摊平，缩短单次事务耗时 |
 
-项目采用 **API Gateway + gRPC 微服务** 模式，职责分离，性能卓越。
+## ✨ 核心亮点 (Key Features)
 
+- 🔧 微服务拆分：`auth / user / product / seckill / order / stock_reconciler / api_gateway` 独立部署与水平扩展。
+- ⚡ 高性能通信：内部使用 `gRPC + Protobuf`，网关对外统一 HTTP/JSON。
+- 🧠 秒杀链路：Redis 预减库存 → 推送异步订单消息 → 批量消费落库 → 对账服务定期校准。
+- 🔒 安全与治理：JWT 鉴权、速率限制、幂等校验、防止重复下单与恶意刷接口。
+- 📦 一致性保障：消息发布确认、`MessageId` 幂等消费、库存对账补偿机制。
+- 🧪 压测验证：在低配置服务器与本地开发环境均达到稳定高吞吐与 100% 成功率。
 
+## 🏗 架构总览
 
-*   **API Gateway (Gin):** 作为系统的唯一入口，负责处理外部 HTTP 请求、用户认证(JWT)、限流，并将请求转换为 gRPC 调用转发给内部服务。
-*   **gRPC 微服务:**
-    *   **用户服务:** 负责用户注册、登录等身份认证相关功能。
-    *   **商品服务:** 负责商品信息的管理，并利用 Redis 进行数据缓存。
-    *   **秒杀服务:** 核心服务，处理秒杀请求，通过 Redis 完成库存预扣减并将订单任务推送到消息队列。
-*   **消息队列 (RabbitMQ):** Topic Exchange + 发布确认；消息含唯一 `MessageId` 支持消费端幂等；批量消费与批量落库减少写放大。
-*   **订单消费者 / 库存对账:** 批量解析订单消息写入 MySQL；独立库存对账服务从 Redis 脏集合批量同步真实库存到 MySQL，保障最终一致。
-*   **基础设施:**
-    *   **MySQL:** 持久化存储用户、商品、订单等核心数据。
-    *   **Redis:** 用于热点数据缓存、分布式锁、以及秒杀库存的原子操作。
+```text
+Client -> API Gateway (Gin + JWT + RateLimit)
+          |--> Auth Service (gRPC)
+          |--> User Service (gRPC)
+          |--> Product Service (gRPC + Redis Cache)
+          |--> Seckill Service (Redis Lua + MQ enqueue)
+RabbitMQ (Order Create / Cancel Queues)
+          |--> Order Create Consumer -> MySQL (Batch Insert)
+          |--> Order Cancel Consumer -> MySQL + Redis Rollback
+Stock Reconciler (Diff Redis vs DB, fix drift)
+MySQL (Persistent)  Redis (Hot Keys / Atomic Stock)
+```
 
-##  技术栈
+> 架构图与消息时序：见 `notes/项目架构.drawio` 与 `notes/rabbitMQ.drawio`。
 
-| 分类 | 技术 | 描述 |
-| :--- | :--- | :--- |
-| **语言** | Go | 项目主要开发语言 |
-| **Web 框架** | Gin | 用于构建高性能的 API Gateway |
-| **RPC 框架** | gRPC | 用于微服务之间的高性能通信 |
-| **ORM** | GORM | 方便、高效的数据库操作工具 |
-| **数据库** | MySQL | 关系型数据库，用于持久化存储 |
-| **缓存** | Redis Cluster | 分布式高可用，高并发库存与热数据缓存 |
-| **消息队列** | RabbitMQ | 用于服务解耦和流量削峰 |
-| **配置管理** | Viper | 用于加载和管理项目配置 |
-| **日志** | Zap | 高性能的结构化日志库 |
-| **容器化** | Docker, Docker Compose | 用于项目环境的打包、部署和一键启动 |
+## 🧪 性能基准 (Benchmarks)
 
-##  快速开始
+| 场景 | 并发参数 | 总请求 | 总耗时 | 平均延迟 | 峰值吞吐 Requests/sec | P99 | 环境 |
+|------|----------|--------|--------|----------|----------------------|-----|------|
+| 单商品秒杀 | `-c 150 -n 50000 --connections=120` | 50,000 | 11.15s | 27.82ms | 4,484 | 85.83ms | 4C4G 云服务器 |
+| 单商品秒杀 | `-c 500 -n 500000 --connections=200` | 500,000 | 28.99s | 28.64ms | 17,248 | 97.09ms | r5-7640HS 轻薄本 |
 
-### 环境依赖
+**特点：** 全量成功 (0 错误)、平均延迟 <30ms、P99 <100ms。资源有限仍保持稳定吞吐。
 
-*   Go (1.21+)
-*   Docker
-*   Docker Compose
-*   MySQL 8.0
-*   Redis 7+
-*   RabbitMQ 3+
+### 压测命令示例 (ghz)
 
-### 生产环境一键部署
+```bash
+ghz --insecure \
+  --proto proto/seckill.proto \
+  --call seckill.SeckillService.ExecuteSeckill \
+  --data-file output.json \
+  -c 150 -n 50000 --connections=120 --timeout=2s localhost:50053
 
-仅保留生产模式：Redis 与 RabbitMQ 在宿主机自启动，Compose 负责 MySQL 与全部 Go 微服务。
+ghz --insecure \
+  --proto proto/seckill.proto \
+  --call seckill.SeckillService.ExecuteSeckill \
+  --data-file output.json \
+  -c 500 -n 500000 --connections=200 --timeout=2s localhost:50053
+```
 
-#### 步骤 1 克隆项目
+## 🧰 技术栈 (Tech Stack)
+
+| Layer | Technology | Notes |
+|-------|------------|-------|
+| Language | Go 1.25 | 高并发 + 原生多协程 |
+| Gateway | Gin | HTTP 入口 / 中间件治理 |
+| RPC | gRPC + Protobuf | 内部高性能通信 |
+| Cache | Redis (单实例或可扩展 Cluster) | 库存预减 / 热数据 / Lua 脚本 |
+| Queue | RabbitMQ | 削峰 + 异步解耦 + 幂等消息 |
+| DB | MySQL + GORM | 事务与持久化 |
+| Config | Viper | 统一配置加载 |
+| Logging | Zap + Lumberjack | 结构化日志 + 滚动切割 |
+| Security | JWT / RateLimit | 接口防滥用 |
+| Tooling |  ghz | 压测与容量评估 |
+
+## 📂 目录结构
+
+```text
+backend/
+├── api/                 # HTTP 入口 & 中间件 (JWT / 限流 / 渲染)
+├── cmd/                 # 各微服务 / 消费者 / 对账入口 main.go
+├── config/              # 本地 & 容器化配置文件
+├── internal/            # 业务实现 (dao/service/mq/client/...)
+├── pkg/                 # 公共工具 (logger / error / bootstrap / utils)
+├── proto/               # .proto 定义 (auth/product/seckill/order/user)
+├── proto_output/        # 生成的 gRPC 代码
+├── scripts/             # 初始化 SQL 等
+├── notes/               # 架构/消息队列/优化思路文档
+└── docker-compose.yml   # 编排文件
+```
+
+## ⚙️ 快速开始 (Quick Start)
+
+### 1. 克隆仓库
 
 ```bash
 git clone https://github.com/CCDD2022/seckill-system.git
 cd seckill-system/backend
 ```
 
-#### 步骤 2 构建并启动
+### 2. Docker 启动
 
 ```bash
 docker compose up -d --build
 ```
 
-#### 步骤 3 检查服务
+### 3. 查看运行状态
 
 ```bash
 docker compose ps
 ```
 
-#### 步骤 4 Nginx 前端与反代
+### 4. 本地开发 (按需单独启动)
 
-确保 `/api/` 指向本机 `8080`。
-
-### 配置说明
-
-环境变量 `CONFIG_PATH=/app/config/config.docker.yaml` 在容器内指向生产配置；本地开发继续使用 `config/config.yaml`。
-
-RabbitMQ 注意：默认 `guest/guest` 仅允许从 127.0.0.1 访问，容器内通过 `host.docker.internal` 会被视为远程。
-请在宿主机 RabbitMQ 中创建生产账号，例如：
 ```bash
-# 假设已安装 rabbitmqctl
+go run cmd/api_gateway/main.go
+go run cmd/seckill_service/main.go
+go run cmd/order_create_consumer/main.go
+```
+确保 MySQL / Redis / RabbitMQ 已启动并配置正确。
+
+### 5. 配置说明
+
+| 文件 | 用途 |
+|------|------|
+| `config.yaml` | 本地开发默认配置 |
+| `config.docker.yaml` | 容器环境使用，通过 `CONFIG_PATH` 指定 |
+
+RabbitMQ 默认 `guest/guest` 受限：生产建议创建专用用户：
+ 
+```bash
 rabbitmqctl add_user seckill_prod strong_password_here
 rabbitmqctl set_user_tags seckill_prod administrator
 rabbitmqctl set_permissions -p / seckill_prod ".*" ".*" ".*"
 ```
-如果创建了新的 RabbitMQ 用户，请修改 `config/config.docker.yaml` 中 `mq.user` 与 `mq.password`（开发环境用本地 `config.yaml` 另行调整）。
 
-Nginx 示例（已部署，复述要点）:
+### 6. Nginx 反向代理示例
+
 ```nginx
-server {
-  listen 80;
-  server_name 175.27.226.213;
-  location / { root /home/cwx/seckill-system/fronted/dist; index index.html; try_files $uri $uri/ /index.html; gzip on; gzip_types text/plain text/css application/javascript application/json; }
-  location /api/ { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
-  location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ { root /home/cwx/seckill-system/fronted/dist; expires 30d; add_header Cache-Control "public, immutable"; access_log off; }
+location /api/ {
+  proxy_pass http://127.0.0.1:8080;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Real-IP $remote_addr;
 }
 ```
 
-配置文件说明：
-* `config.yaml` —— 本地非 Docker 开发使用（localhost 等）。
-* `config.docker.yaml` —— 生产容器使用（容器名与 host.docker.internal）。
+## 🔐 核心中间件 & 策略
 
-### （可选）本地源码调试
+- 鉴权：`JWT` 访问令牌，过期刷新策略（可扩展）。
+- 限流：令牌桶 / 配置化速率，保护热点接口。
+- 幂等：订单请求携带用户+商品维度幂等键；消息层使用 `MessageId`。
+- 防超卖：库存 Redis 单键 + Lua 原子减库存 + 阈值校验。
+- 一致性：批量插入 + 对账服务比对 Redis 预减与 DB 实际销量。
 
-仍可直接 `go run cmd/<service>/main.go` 启动单个服务，需自行提供外部依赖地址。
-    
-    # 终端2: 启动 User Service
-    go run cmd/user_service/main.go
-    
-    # 终端3: 启动 Product Service
-    go run cmd/product_service/main.go
-    
-    # 终端4: 启动 Seckill Service
-    go run cmd/seckill_service/main.go
-    
-    # 终端5: 启动 Order Consumer
-    go run cmd/order_create_consumer/main.go
-    
-    # 终端6: 启动 API Gateway
-    go run cmd/api_gateway/main.go
-    ```
+## 🔄 秒杀流程 (Seckill Flow)
 
-### API 使用示例
+1. 用户请求进入网关，鉴权 + 限流。
+2. Seckill Service 使用 Redis 预减库存 (原子 Lua)。
+3. 预减成功 → 发送订单创建消息到 RabbitMQ。
+4. 消费者批量提取消息，构建订单批量写入 MySQL。
+5. 定时对账扫描 Redis 脏数据集 / 或对比订单完成情况回补异常。
+6. 用户通过查询接口获取订单状态。
 
-项目成功启动后，您可以使用以下 API 进行测试：
+## 🛠 调优参数 (Tuning Knobs)
 
-#### 1. 用户注册
+| 参数 | 作用 | 调优建议 |
+|------|------|---------|
+| `mq.consumer_prefetch` | 消费端预取批量 | 增大提升吞吐，过大可能加长尾延迟 |
+| `mq.order_batch_size` | 单批写入订单数量 | CPU/IO vs 延迟折中 |
+| `order_batch_interval_ms` | 批次形成最大等待时间 | 防止低流量下批次迟迟不落库 |
+| `rate_limits.seckill` | 秒杀入口 QPS 控制 | 压测阶段可临时放开 |
+| `channel_pool_size` | MQ Channel 复用池大小 | 根据并发与连接开销设定 |
+
+## 🧪 API 示例
 
 ```bash
+# 注册
 curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "password123",
-    "email": "test@example.com",
-    "phone": "13800138000"
-  }'
-```
+  -H 'Content-Type: application/json' \
+  -d '{"username":"testuser","password":"password123","email":"test@example.com","phone":"13800138000"}'
 
-#### 2. 用户登录
-
-```bash
+# 登录
 curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser1",
-    "password": "password123"
-  }'
-```
+  -H 'Content-Type: application/json' \
+  -d '{"username":"testuser1","password":"password123"}'
 
-#### 3. 获取商品列表（需要登录）
+# 获取商品
+curl -H "Authorization: Bearer <JWT>" \
+  http://localhost:8080/api/v1/products?page=1&page_size=10
 
-```bash
-curl -X GET "http://localhost:8080/api/v1/products?page=1&page_size=10" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-#### 4. 执行秒杀（需要登录）
-
-```bash
+# 执行秒杀
 curl -X POST http://localhost:8080/api/v1/seckill/execute \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "product_id": 1,
-    "quantity": 1
-  }'
+  -H "Authorization: Bearer <JWT>" -H "Content-Type: application/json" \
+  -d '{"product_id":1,"quantity":1}'
 ```
 
-### 测试账户
+### 测试账号
 
-系统已预置测试账户（密码均为 `password123`）：
-* `testuser1` / `password123`
-* `testuser2` / `password123`
-* `testuser3` / `password123`
+`testuser1 / testuser2 / testuser3` 密码统一：`password123`
 
-##  项目结构
+## 🧭 Roadmap
 
-```
-seckill-shop/
-├── api/                  # API Gateway (Gin) 路由与处理器
-├── cmd/                  # 各个服务的启动入口 (main.go)
-├── config/               # 配置文件
-├── internal/             # 内部私有代码 (核心业务逻辑)
-├── pkg/                  # 公共库
-├── proto/                # Protocol Buffers (.proto 文件)
-├── scripts/              # 脚本文件 (如 SQL 初始化)
-├── docs/                 # 架构/压测/部署文档
-└── docker-compose.yml    # 生产编排（MySQL + 微服务，外部 Redis/RabbitMQ）
-## Redis Cluster 初始化指引
+- [ ] 支持多商品并行秒杀隔离策略 (分槽 / 分片)
+- [ ] 增加分布式追踪 (OpenTelemetry)
+- [ ] 增加指标上报 (Prometheus + Grafana Dashboard)
+- [ ] 加入熔断 / 降级策略 (Hystrix-like)
+- [ ] 自动重试与死信队列处理优化
+- [ ] 灰度发布 / Canary 流量拆分
 
-项目已提供基于 Docker Compose 的 3 主 3 从拓扑（服务名 `redis-node-1` .. `redis-node-6`）。`redis-cluster-init` 服务在启动后自动执行：
+## 📝 设计与优化说明文档
 
-```bash
-redis-cli --cluster create redis-node-1:6379 redis-node-2:6379 redis-node-3:6379 redis-node-4:6379 redis-node-5:6379 redis-node-6:6379 --cluster-replicas 1 --cluster-yes
-```
+更多背景与思考见：`notes/架构解答.md`、`notes/消息队列如何作用.md`、`notes/优化点.md`、`notes/jwt.md`、`notes/proto.md`。
 
-如需在物理/Windows环境自行构建，可分别启动六个实例并执行同上述命令（确保端口互通）。
+## 📄 License
 
-## 秒杀链路优化要点
-
-1. 入口限流配置化 (`rate_limits`)，支持按场景调优。
-2. Redis Lua 单键操作确保 Cluster 下无跨槽；库存脏集合 SPOP 批处理降低对账频率开销。
-3. RabbitMQ 发布确认 + `MessageId` 幂等，防止“库存扣减成功但消息丢失”引起的不一致。
-4. 订单与库存对账采用批处理与单条 CASE WHEN 更新，降低行锁竞争与慢 SQL 频率。
-5. 频道池 (Channel Pool) 提升并发发布吞吐；可根据压测调整 `channel_pool_size`。
-
-## 压测与调优
-
-主要参数：
-
-* `mq.consumer_prefetch` 控制消费者预取批量；过小降低吞吐，过大增加延迟。
-* `mq.order_batch_size` 与 `order_batch_interval_ms` 控制批落库；需要在吞吐与延迟之间权衡。
-* `rate_limits.seckill` 在压测阶段可临时提升防止限流成为瓶颈。
-* MySQL `max_open_conns` 与 Redis IO 线程、内核参数（容器外）需与目标并发匹配。
-
-压测脚本：详见 `docs/LOAD_TEST.md` 与 `loadtest/seckill_vegeta.go`。
-
-## 开源许可
-
-本项目采用 [MIT License](https://opensource.org/licenses/MIT) 开源许可。
+本项目采用 [MIT License](LICENSE)。

@@ -51,3 +51,9 @@ temp/
 !README.md
 
 pids
+
+output.json
+
+scripts
+
+config/config.docker.yaml
