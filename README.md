@@ -7,9 +7,18 @@
 
 ## 📌 为什么做这个项目 (Problem → Solution → Result)
 
+在真实高并发场景下，秒杀会集中暴露“数据库写放大、库存一致性、重复/恶意请求、消息可靠”四类典型痛点；本项目的目标是在资源有限条件下仍保持稳定、可恢复与最终一致。
+
+| Problem | Solution | Result |
+|---------|----------|--------|
+| 热门商品瞬时流量冲击数据库导致超卖与大量行锁竞争 | Redis 原子 Lua 预减库存 + 单键/单槽简化热点 + 仅在扣减成功后入队 | 请求阶段几乎全在内存与网络，显著削峰，避免 DB 写爆 |
+| 库存扣减成功但订单写入/消息投递异常造成不一致 | RabbitMQ 发布确认 + 消费端幂等校验(msgId) + 对账补偿(Reconciler) | 消息与订单最终一致，无超卖/重复订单 |
+| 重复/恶意请求刷接口影响库存准确与队列膨胀 | JWT 鉴权 + 令牌桶限流 + 用户+商品幂等键/Redis 标记 | 入口受控，降低无效写与热点争用 |
+| 批量订单写入造成写放大与慢 SQL 阻塞 | MQ 异步削峰 + 批量消费聚合写入 + 连接池/事务粒度优化 | 均衡数据库压力，降低单事务耗时与锁竞争 |
+
+> 设计原则：先削峰再落库，先缓存校验再持久化，失败可补偿，过程可观测。若需更详细演进过程见 `ARCHITECTURE.md`。
+
 ## 🏗 架构总览
-
-
 
 ### 架构图 (Simplified)
 
@@ -64,6 +73,55 @@ sequenceDiagram
   Order->>DB: Read
   Order-->>Gateway: Status
 ```
+
+## ✨ 核心亮点 (Key Features)
+
+- 🔧 微服务拆分：`auth / user / product / seckill / order / stock_reconciler / api_gateway` 独立部署与水平扩展。
+- ⚡ 高性能通信：内部使用 `gRPC + Protobuf`，网关对外统一 HTTP/JSON。
+- 🧠 秒杀链路：Redis 预减库存 → 推送异步订单消息 → 批量消费落库 → 对账服务定期校准。
+- 🔒 安全与治理：JWT 鉴权、速率限制、幂等校验、防止重复下单与恶意刷接口。
+- 📦 一致性保障：消息发布确认、`MessageId` 幂等消费、库存对账补偿机制。
+- 🧪 压测验证：在低配置服务器与本地开发环境均达到稳定高吞吐与 100% 成功率。
+
+## 🧪 性能基准 (Benchmarks)
+
+| 场景 | 并发参数 | 总请求 | 总耗时 | 平均延迟 | Requests/sec | P99 | 环境 |
+|------|----------|--------|--------|----------|----------------------|-----|------|
+| 单商品秒杀 | `-c 150 -n 50000 --connections=120` | 50,000 | 11.15s | 27.82ms | 4,484 | 85.83ms | 4C4G 云服务器 |
+| 单商品秒杀 | `-c 500 -n 500000 --connections=200` | 500,000 | 28.99s | 28.64ms | 17,248 | 97.09ms | r5-7640HS 轻薄本 |
+
+**特点：** 全量成功 (0 错误)、平均延迟 <30ms、P99 <100ms。资源有限仍保持稳定吞吐。
+
+### 压测命令示例 (ghz)
+
+```bash
+ghz --insecure \
+  --proto proto/seckill.proto \
+  --call seckill.SeckillService.ExecuteSeckill \
+  --data-file output.json \
+  -c 150 -n 50000 --connections=120 --timeout=2s localhost:50053
+
+ghz --insecure \
+  --proto proto/seckill.proto \
+  --call seckill.SeckillService.ExecuteSeckill \
+  --data-file output.json \
+  -c 500 -n 500000 --connections=200 --timeout=2s localhost:50053
+```
+
+## 🧰 技术栈 (Tech Stack)
+
+| Layer | Technology | Notes |
+|-------|------------|-------|
+| Language | Go 1.25 | 高并发 + 原生多协程 |
+| Gateway | Gin | HTTP 入口 / 中间件治理 |
+| RPC | gRPC + Protobuf | 内部高性能通信 |
+| Cache | Redis (单实例或可扩展 Cluster) | 库存预减 / 热数据 / Lua 脚本 |
+| Queue | RabbitMQ | 削峰 + 异步解耦 + 幂等消息 |
+| DB | MySQL + GORM | 事务与持久化 |
+| Config | Viper | 统一配置加载 |
+| Logging | Zap + Lumberjack | 结构化日志 + 滚动切割 |
+| Security | JWT / RateLimit | 接口防滥用 |
+| Tooling | ghz | 压测与容量评估 |
 
 ## 📂 目录结构
 
