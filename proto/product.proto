@@ -4,12 +4,22 @@ package product;
 option go_package = "proto_output/product";
 
 service ProductService {
-  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
-  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+  // 增删改商品 这些是管理员操作
   rpc CreateProduct(CreateProductRequest) returns (CreateProductResponse);
   rpc UpdateProduct(UpdateProductRequest) returns (UpdateProductResponse);
   rpc DeleteProduct(DeleteProductRequest) returns (DeleteProductResponse);
+
+  // 获取商品列表 普通人操作
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+  // 获取可秒杀商品列表
+  rpc ListActiveSeckillProducts(ListProductsRequest) returns (ListProductsResponse);
+
+  // 库存操作
+  rpc DeductStock(DeductStockRequest) returns (DeductStockResponse);
+  rpc ReturnStock(ReturnStockRequest) returns (ReturnStockResponse);
 }
+
 
 message Product {
   int64 id = 1;
@@ -18,8 +28,14 @@ message Product {
   double price = 4;
   int32 stock = 5;
   string image_url = 6;
-  string created_at = 7;
-  string updated_at = 8;
+  int64 seckill_start_time = 7;  // 秒杀开始时间 (unix秒)
+  int64 seckill_end_time = 8;    // 秒杀结束时间 (unix秒)
+  // reserved field number 10 (旧 seckill_status)
+  int64 seconds_until_start = 11; // 距离开始秒数（未开始时）
+  int64 seconds_until_end = 12;   // 距离结束秒数（进行中）
+
+  int64 created_at = 13; // 创建时间 (unix秒)
+  int64 updated_at = 14; // 更新时间 (unix秒)
 }
 
 message GetProductRequest {
@@ -35,6 +51,9 @@ message GetProductResponse {
 message ListProductsRequest {
   int32 page = 1;
   int32 page_size = 2;
+  // 状态筛选：-1 全部；0 未开始；1 进行中；2 已结束
+  int32 status = 3;
+  
 }
 
 message ListProductsResponse {
@@ -44,12 +63,15 @@ message ListProductsResponse {
   int32 total = 4;
 }
 
+
 message CreateProductRequest {
   string name = 1;
   string description = 2;
   double price = 3;
   int32 stock = 4;
   string image_url = 5;
+  int64 seckill_start_time = 6;  // 秒杀开始时间 unix秒
+  int64 seckill_end_time = 7;    // 秒杀结束时间 unix秒
 }
 
 message CreateProductResponse {
@@ -65,6 +87,8 @@ message UpdateProductRequest {
   double price = 4;
   int32 stock = 5;
   string image_url = 6;
+  int64 seckill_start_time = 7;  // 更新：秒杀开始时间 unix秒
+  int64 seckill_end_time = 8;    // 更新：秒杀结束时间 unix秒
 }
 
 message UpdateProductResponse {
@@ -80,3 +104,26 @@ message DeleteProductResponse {
   int32 code = 1;
   string message = 2;
 }
+
+// ---【新增】库存操作的消息定义 ---
+message DeductStockRequest {
+  int64 product_id = 1;
+  int32 quantity = 2;
+}
+message DeductStockResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ReturnStockRequest {
+  int64 product_id = 1;
+  int32 quantity = 2;
+}
+message ReturnStockResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+
+
+

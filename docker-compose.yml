@@ -1,0 +1,180 @@
+# 生产环境编排：Redis 与 RabbitMQ 由宿主机自启动，前端已由 Nginx 提供静态资源与 /api 反代。
+services:
+  mysql:
+    image: mysql:8.0.19
+    container_name: mysql8019
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root1234
+      MYSQL_DATABASE: seckill_shop
+      TZ: Asia/Shanghai
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - /home/cwx/my.conf:/etc/mysql/conf.d/my.cnf:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot1234"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [seckill-net]
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: auth_service }
+    container_name: seckill-auth-service
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: user_service }
+    container_name: seckill-user-service
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  product-service:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: product_service }
+    container_name: seckill-product-service
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  seckill-service:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: seckill_service }
+    container_name: seckill-seckill-service
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "50053:50053"
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: order_service }
+    container_name: seckill-order-service
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  order-create-consumer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: order_create_consumer }
+    container_name: seckill-order-create-consumer
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  order-cancel-consumer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: order_cancel_consumer }
+    container_name: seckill-order-cancel-consumer
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  stock-reconciler:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: stock_reconciler }
+    container_name: seckill-stock-reconciler
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: api_gateway }
+    container_name: seckill-api-gateway
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      - auth-service
+      - user-service
+      - product-service
+      - seckill-service
+      - order-service
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    networks: [seckill-net]
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
+networks:
+  seckill-net:
+    driver: bridge

@@ -58,7 +58,7 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, product.GetProductResponse{
+	JSONProto(c, http.StatusOK, &product.GetProductResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 		Product: resp.GetProduct(),
@@ -69,6 +69,7 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 func (h *ProductHandler) ListProducts(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	pageSizeStr := c.DefaultQuery("page_size", "20")
+	statusStr := c.DefaultQuery("status", "-1")
 
 	page, err := strconv.Atoi(pageStr)
 	if err != nil || page < 1 {
@@ -83,9 +84,15 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
+	// 解析状态
+	stFilter, err := strconv.Atoi(statusStr)
+	if err != nil {
+		stFilter = -1
+	}
 	resp, err := h.client.ListProducts(ctx, &product.ListProductsRequest{
 		Page:     int32(page),
 		PageSize: int32(pageSize),
+		Status:   int32(stFilter),
 	})
 	if err != nil {
 		st, _ := status.FromError(err)
@@ -104,7 +111,7 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, product.ListProductsResponse{
+	JSONProto(c, http.StatusOK, &product.ListProductsResponse{
 		Code:     resp.GetCode(),
 		Message:  resp.GetMessage(),
 		Products: resp.GetProducts(),
@@ -114,6 +121,13 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 
 // CreateProduct 创建商品
 func (h *ProductHandler) CreateProduct(c *gin.Context) {
+	if username, ok := c.Get("username"); !ok || username.(string) != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    e.ERROR,
+			"message": "forbidden: admin only",
+		})
+		return
+	}
 	var req product.CreateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -144,7 +158,7 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, product.CreateProductResponse{
+	JSONProto(c, http.StatusCreated, &product.CreateProductResponse{
 		Code:      resp.GetCode(),
 		Message:   resp.GetMessage(),
 		ProductId: resp.GetProductId(),
@@ -153,6 +167,13 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 
 // UpdateProduct 更新商品
 func (h *ProductHandler) UpdateProduct(c *gin.Context) {
+	if username, ok := c.Get("username"); !ok || username.(string) != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    e.ERROR,
+			"message": "forbidden: admin only",
+		})
+		return
+	}
 	productIDStr := c.Param("id")
 	productID, err := strconv.ParseInt(productIDStr, 10, 64)
 	if err != nil {
@@ -194,7 +215,7 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, product.UpdateProductResponse{
+	JSONProto(c, http.StatusOK, &product.UpdateProductResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 	})
@@ -202,6 +223,13 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 
 // DeleteProduct 删除商品
 func (h *ProductHandler) DeleteProduct(c *gin.Context) {
+	if username, ok := c.Get("username"); !ok || username.(string) != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    e.ERROR,
+			"message": "forbidden: admin only",
+		})
+		return
+	}
 	productIDStr := c.Param("id")
 	productID, err := strconv.ParseInt(productIDStr, 10, 64)
 	if err != nil {
@@ -235,7 +263,7 @@ func (h *ProductHandler) DeleteProduct(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, product.DeleteProductResponse{
+	JSONProto(c, http.StatusOK, &product.DeleteProductResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 	})
@@ -243,12 +271,11 @@ func (h *ProductHandler) DeleteProduct(c *gin.Context) {
 
 // RegisterRoutes 注册商品相关路由
 func (h *ProductHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	products := rg.Group("/products")
-	{
-		products.GET("/:id", h.GetProduct)
-		products.GET("", h.ListProducts)
-		products.POST("", h.CreateProduct)
-		products.PUT("/:id", h.UpdateProduct)
-		products.DELETE("/:id", h.DeleteProduct)
-	}
+	
+	rg.GET("/:id", h.GetProduct)
+	rg.GET("", h.ListProducts)
+	rg.POST("", h.CreateProduct)
+	rg.PUT("/:id", h.UpdateProduct)
+	rg.DELETE("/:id", h.DeleteProduct)
+	
 }

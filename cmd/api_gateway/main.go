@@ -2,23 +2,22 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 
+	"github.com/CCDD2022/seckill-system/internal/client/grpc"
+	"github.com/CCDD2022/seckill-system/pkg/app"
+	"github.com/CCDD2022/seckill-system/pkg/logger"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"github.com/CCDD2022/seckill-system/api/middleware"
 	v1 "github.com/CCDD2022/seckill-system/api/v1"
-	"github.com/CCDD2022/seckill-system/config"
 	"github.com/CCDD2022/seckill-system/pkg/utils"
 )
 
 func main() {
 	// 加载配置
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
+	cfg := app.BootstrapApp()
 
 	// 设置Gin模式
 	switch cfg.Server.Mode {
@@ -33,6 +32,18 @@ func main() {
 	// 初始化Gin引擎
 	r := gin.Default()
 
+	// CORS 跨域配置
+	r.Use(cors.New(cors.Config{
+		AllowAllOrigins:  true,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
+		AllowCredentials: false,
+	}))
+
+	// 全局限流中间件（配置化）
+	r.Use(middleware.GlobalRateLimit(cfg))
+
 	// 健康检查接口
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -43,9 +54,9 @@ func main() {
 
 	// 初始化gRPC客户端
 	// 在这里 每个client
-	clients, err := v1.InitClients(cfg)
+	clients, err := grpc.InitClients(cfg)
 	if err != nil {
-		log.Fatalf("Failed to init gRPC clients: %v", err)
+		logger.Error("Failed to init gRPC clients: ", "err", err)
 	}
 
 	// JWT 工具
@@ -55,28 +66,41 @@ func main() {
 	authHandler := v1.NewAuthHandler(clients.AuthService)
 	userHandler := v1.NewUserHandler(clients.UserService)
 	productHandler := v1.NewProductHandler(clients.ProductService)
+	seckillHandler := v1.NewSeckillHandler(clients.SeckillService)
+	orderHandler := v1.NewOrderHandler(clients.OrderService)
 
 	// 定义API路由组
 	api := r.Group("/api/v1")
 	{
 		// 注册认证路由（无需认证）
 		authHandler.RegisterRoutes(api)
+		//seckillHandler.RegisterRoutes(api) // 测试用
 
 		// 受保护的路由组（需要JWT认证）
+		// 用户、商品、订单统一受 JWT 保护
 		protected := api.Group("")
 		protected.Use(middleware.JWTAuthMiddleware(jwtUtil))
 		{
-			// 注册用户路由
-			userHandler.RegisterRoutes(protected)
-			// 注册商品路由
-			productHandler.RegisterRoutes(protected)
+			// 用户路由
+			userHandler.RegisterRoutes(protected.Group("/users"))
+			// 商品路由
+			productHandler.RegisterRoutes(protected.Group("/products"))
+			// 订单路由（独立限流）
+			ordersGroup := protected.Group("/orders")
+			ordersGroup.Use(middleware.OrderRateLimit(cfg))
+			orderHandler.RegisterRoutes(ordersGroup)
 		}
+
+		// 秒杀路由（JWT + 专用限流）
+		seckillGroup := api.Group("/seckill")
+		seckillGroup.Use(middleware.JWTAuthMiddleware(jwtUtil), middleware.SeckillRateLimit(cfg))
+		seckillHandler.RegisterRoutes(seckillGroup)
 	}
 
 	// 启动服务器
 	serverAddr := fmt.Sprintf("%s:%d", cfg.Services.APIGateway.Host, cfg.Services.APIGateway.Port)
-	log.Printf("API Gateway starting on %s", serverAddr)
+	logger.Info("API Gateway starting on " + serverAddr)
 	if err := r.Run(serverAddr); err != nil {
-		log.Fatalf("Failed to start API Gateway: %v", err)
+		logger.Error("Failed to start API Gateway: ", "err", err)
 	}
 }

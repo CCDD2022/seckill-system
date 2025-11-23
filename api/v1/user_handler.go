@@ -58,8 +58,8 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	// ✅ 直接返回 Service 层的完整响应
-	c.JSON(http.StatusOK, user.GetUserResponse{
+	// ✅ 直接返回 Service 层的完整响应（统一使用 JSONProto）
+	JSONProto(c, http.StatusOK, &user.GetUserResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 		User:    resp.GetUser(),
@@ -108,8 +108,8 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	// ✅ 直接返回 Service 层的完整响应
-	c.JSON(http.StatusOK, user.UpdateUserResponse{
+	// ✅ 直接返回 Service 层的完整响应（统一使用 JSONProto）
+	JSONProto(c, http.StatusOK, &user.UpdateUserResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 		User:    resp.GetUser(),
@@ -158,8 +158,8 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// ✅ 直接返回 Service 层的完整响应
-	c.JSON(http.StatusOK, user.ChangePasswordResponse{
+	// ✅ 直接返回 Service 层的完整响应（统一使用 JSONProto）
+	JSONProto(c, http.StatusOK, &user.ChangePasswordResponse{
 		Code:    resp.GetCode(),
 		Message: resp.GetMessage(),
 	})
@@ -167,10 +167,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 // RegisterRoutes 注册用户路由
 func (h *UserHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	users := rg.Group("/users")
-	{
-		users.GET("/profile", h.GetProfile)
-		users.PUT("/profile", h.UpdateProfile)
-		users.PUT("/password", h.ChangePassword)
-	}
+	rg.GET("/profile", h.GetProfile)
+	rg.PUT("/profile", h.UpdateProfile)
+	rg.PUT("/password", h.ChangePassword)
 }

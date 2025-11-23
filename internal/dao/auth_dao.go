@@ -33,6 +33,7 @@ func (dao *AuthDao) GetUserByUsername(ctx context.Context, username string) (*mo
 
 // UserExists 检查用户名是否存在
 func (dao *AuthDao) UserExists(ctx context.Context, username string) (bool, error) {
+	
 	var count int64
 	err := dao.db.WithContext(ctx).Model(&model.User{}).Where("username = ?", username).Count(&count).Error
 	if err != nil {

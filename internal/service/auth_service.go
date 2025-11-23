@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"time"
-
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/model"
 	"github.com/CCDD2022/seckill-system/pkg/e"
@@ -76,8 +74,8 @@ func (s *AuthService) Register(ctx context.Context, req *auth.RegisterRequest) (
 		Username:  newUser.Username,
 		Email:     newUser.Email,
 		Phone:     newUser.Phone,
-		CreatedAt: newUser.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: newUser.UpdatedAt.Format(time.RFC3339),
+		CreatedAt: newUser.CreatedAt.Unix(),
+		UpdatedAt: newUser.UpdatedAt.Unix(),
 	}
 
 	return &auth.RegisterResponse{
@@ -128,8 +126,8 @@ func (s *AuthService) Login(ctx context.Context, req *auth.LoginRequest) (*auth.
 		Username:  dbUser.Username,
 		Email:     dbUser.Email,
 		Phone:     dbUser.Phone,
-		CreatedAt: dbUser.CreatedAt.Format(time.RFC3339),
-		UpdatedAt: dbUser.UpdatedAt.Format(time.RFC3339),
+		CreatedAt: dbUser.CreatedAt.Unix(),
+		UpdatedAt: dbUser.UpdatedAt.Unix(),
 	}
 
 	return &auth.LoginResponse{
