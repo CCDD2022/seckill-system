@@ -7,78 +7,63 @@
 
 ## 📌 为什么做这个项目 (Problem → Solution → Result)
 
-| Problem | Solution | Result |
-|---------|----------|--------|
-| 热门商品秒杀瞬时流量冲击数据库导致超卖与大量行锁竞争 | Redis 原子预减库存 + Lua 脚本 + 单槽键设计 | 请求阶段仅内存+缓存操作，极低延迟，避免 DB 写峰值 |
-| 库存扣减成功但订单写入/消息投递异常造成不一致 | RabbitMQ 发布确认 + 消费端幂等 + 定时对账回补 | 最终一致，无超卖，无重复订单 |
-| 高并发场景下重复/恶意请求刷接口 | JWT 鉴权 + 令牌桶限流 + 幂等键 | 控制入口压力，保护核心库存键 |
-| 大量订单写入造成写放大与慢 SQL | 批量消息消费 + 批量插入/更新 + 连接池调优 | 将写操作摊平，缩短单次事务耗时 |
-
-## ✨ 核心亮点 (Key Features)
-
-- 🔧 微服务拆分：`auth / user / product / seckill / order / stock_reconciler / api_gateway` 独立部署与水平扩展。
-- ⚡ 高性能通信：内部使用 `gRPC + Protobuf`，网关对外统一 HTTP/JSON。
-- 🧠 秒杀链路：Redis 预减库存 → 推送异步订单消息 → 批量消费落库 → 对账服务定期校准。
-- 🔒 安全与治理：JWT 鉴权、速率限制、幂等校验、防止重复下单与恶意刷接口。
-- 📦 一致性保障：消息发布确认、`MessageId` 幂等消费、库存对账补偿机制。
-- 🧪 压测验证：在低配置服务器与本地开发环境均达到稳定高吞吐与 100% 成功率。
-
 ## 🏗 架构总览
 
-```text
-Client -> API Gateway (Gin + JWT + RateLimit)
-          |--> Auth Service (gRPC)
-          |--> User Service (gRPC)
-          |--> Product Service (gRPC + Redis Cache)
-          |--> Seckill Service (Redis Lua + MQ enqueue)
-RabbitMQ (Order Create / Cancel Queues)
-          |--> Order Create Consumer -> MySQL (Batch Insert)
-          |--> Order Cancel Consumer -> MySQL + Redis Rollback
-Stock Reconciler (Diff Redis vs DB, fix drift)
-MySQL (Persistent)  Redis (Hot Keys / Atomic Stock)
+
+
+### 架构图 (Simplified)
+
+```mermaid
+graph LR
+  FE[Frontend] --> GW[API Gateway]
+  GW --> Auth
+  GW --> User
+  GW --> Product
+  GW --> Seckill
+  GW --> Order
+  Seckill --> Redis
+  Seckill --> MQ[RabbitMQ]
+  MQ --> CreateConsumer
+  MQ --> CancelConsumer
+  CreateConsumer --> Order
+  CancelConsumer --> Order
+  Order --> MySQL
+  Reconciler --> Redis
+  Reconciler --> MySQL
+  Reconciler --> Order
 ```
 
-> 架构图与消息时序：见 `notes/项目架构.drawio` 与 `notes/rabbitMQ.drawio`。
+### 秒杀时序图 (Simplified)
 
-## 🧪 性能基准 (Benchmarks)
+```mermaid
+sequenceDiagram
+  participant User
+  participant Gateway
+  participant Seckill
+  participant Redis
+  participant MQ as RabbitMQ
+  participant Consumer
+  participant Order
+  participant DB as MySQL
 
-| 场景 | 并发参数 | 总请求 | 总耗时 | 平均延迟 | 峰值吞吐 Requests/sec | P99 | 环境 |
-|------|----------|--------|--------|----------|----------------------|-----|------|
-| 单商品秒杀 | `-c 150 -n 50000 --connections=120` | 50,000 | 11.15s | 27.82ms | 4,484 | 85.83ms | 4C4G 云服务器 |
-| 单商品秒杀 | `-c 500 -n 500000 --connections=200` | 500,000 | 28.99s | 28.64ms | 17,248 | 97.09ms | r5-7640HS 轻薄本 |
-
-**特点：** 全量成功 (0 错误)、平均延迟 <30ms、P99 <100ms。资源有限仍保持稳定吞吐。
-
-### 压测命令示例 (ghz)
-
-```bash
-ghz --insecure \
-  --proto proto/seckill.proto \
-  --call seckill.SeckillService.ExecuteSeckill \
-  --data-file output.json \
-  -c 150 -n 50000 --connections=120 --timeout=2s localhost:50053
-
-ghz --insecure \
-  --proto proto/seckill.proto \
-  --call seckill.SeckillService.ExecuteSeckill \
-  --data-file output.json \
-  -c 500 -n 500000 --connections=200 --timeout=2s localhost:50053
+  User->>Gateway: HTTP /seckill
+  Gateway->>Seckill: gRPC Execute
+  Seckill->>Redis: Pre-decrement
+  alt stock ok
+    Seckill->>MQ: Publish order msg
+    Seckill-->>Gateway: Accepted
+    MQ-->>Consumer: Deliver
+    Consumer->>Order: CreateOrder
+    Order->>DB: Insert + decrement
+    Consumer-->>MQ: ACK
+  else stock empty
+    Seckill-->>Gateway: SoldOut
+  end
+  User->>Gateway: Query order
+  Gateway->>Order: GetOrder
+  Order->>DB: Read
+  Order-->>Gateway: Status
 ```
-
-## 🧰 技术栈 (Tech Stack)
-
-| Layer | Technology | Notes |
-|-------|------------|-------|
-| Language | Go 1.25 | 高并发 + 原生多协程 |
-| Gateway | Gin | HTTP 入口 / 中间件治理 |
-| RPC | gRPC + Protobuf | 内部高性能通信 |
-| Cache | Redis (单实例或可扩展 Cluster) | 库存预减 / 热数据 / Lua 脚本 |
-| Queue | RabbitMQ | 削峰 + 异步解耦 + 幂等消息 |
-| DB | MySQL + GORM | 事务与持久化 |
-| Config | Viper | 统一配置加载 |
-| Logging | Zap + Lumberjack | 结构化日志 + 滚动切割 |
-| Security | JWT / RateLimit | 接口防滥用 |
-| Tooling |  ghz | 压测与容量评估 |
 
 ## 📂 目录结构
 
@@ -91,8 +76,6 @@ backend/
 ├── pkg/                 # 公共工具 (logger / error / bootstrap / utils)
 ├── proto/               # .proto 定义 (auth/product/seckill/order/user)
 ├── proto_output/        # 生成的 gRPC 代码
-├── scripts/             # 初始化 SQL 等
-├── notes/               # 架构/消息队列/优化思路文档
 └── docker-compose.yml   # 编排文件
 ```
 
@@ -134,7 +117,7 @@ go run cmd/order_create_consumer/main.go
 | `config.docker.yaml` | 容器环境使用，通过 `CONFIG_PATH` 指定 |
 
 RabbitMQ 默认 `guest/guest` 受限：生产建议创建专用用户：
- 
+
 ```bash
 rabbitmqctl add_user seckill_prod strong_password_here
 rabbitmqctl set_user_tags seckill_prod administrator
@@ -214,9 +197,6 @@ curl -X POST http://localhost:8080/api/v1/seckill/execute \
 - [ ] 自动重试与死信队列处理优化
 - [ ] 灰度发布 / Canary 流量拆分
 
-## 📝 设计与优化说明文档
-
-更多背景与思考见：`notes/架构解答.md`、`notes/消息队列如何作用.md`、`notes/优化点.md`、`notes/jwt.md`、`notes/proto.md`。
 
 ## 📄 License
 
