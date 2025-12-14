@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// JSONProto writes a protobuf message as JSON with zero-values emitted
+// JSONProto 把protobuf的消息用json格式返回给客户端
 func JSONProto(c *gin.Context, status int, m proto.Message) {
 	mo := protojson.MarshalOptions{EmitUnpopulated: true, UseProtoNames: true}
 	b, err := mo.Marshal(m)

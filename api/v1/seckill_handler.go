@@ -76,6 +76,5 @@ func (h *SeckillHandler) ExecuteSeckill(c *gin.Context) {
 
 // RegisterRoutes 注册路由
 func (h *SeckillHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	// 统一规范：不再在 handler 内层创建新的分组，只使用传入前缀
 	rg.POST("/execute", h.ExecuteSeckill)
 }

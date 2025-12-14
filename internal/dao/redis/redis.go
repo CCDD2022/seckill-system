@@ -31,7 +31,7 @@ func InitRedis(cfg *config.RedisConfig) (redis.UniversalClient, error) {
 		ReadTimeout:     3 * time.Second,
 		WriteTimeout:    3 * time.Second,
 		PoolTimeout:     4 * time.Second, // 获取连接的超时时间
-		
+
 	}
 	client := redis.NewClient(opts)
 	redisDB = client
@@ -47,41 +47,38 @@ func GetRedisDB() redis.UniversalClient {
 	return redisDB
 }
 
-// WarmupRedis 预热Redis连接池
+// WarmupRedis 预热Redis连接池（并发版）
 func WarmupRedis(rdb redis.UniversalClient, minIdleConns int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 方法1：执行多个Ping，强制创建连接
-	for i := 0; i < minIdleConns/10; i++ {
-		if err := rdb.Ping(ctx).Err(); err != nil {
-			return fmt.Errorf("预热ping失败: %w", err)
+	logger.Info("开始预热Redis连接池", "target", minIdleConns)
+
+	// 使用并发协程强制连接池创建连接
+	// 只有并发请求数 > 当前空闲连接数，连接池才会创建新连接
+	concurrency := minIdleConns
+	done := make(chan error, concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			// 简单的 Ping 操作即可，无需写入垃圾数据
+			done <- rdb.Ping(ctx).Err()
+		}()
+	}
+
+	// 等待所有 Ping 完成
+	for i := 0; i < concurrency; i++ {
+		if err := <-done; err != nil {
+			return fmt.Errorf("预热失败: %w", err)
 		}
 	}
 
-	// 方法2：批量执行Set命令，更快创建连接
-	pipeline := rdb.Pipeline()
-	for i := 0; i < minIdleConns/5; i++ {
-		pipeline.Set(ctx, fmt.Sprintf("warmup:key:%d", i), i, 1*time.Minute)
-	}
-	if _, err := pipeline.Exec(ctx); err != nil {
-		return fmt.Errorf("预热pipeline失败: %w", err)
-	}
-
-	// 等待连接池填充
-	time.Sleep(2 * time.Second)
-
-	// 验证预热结果
+	// 验证结果
 	stats := rdb.PoolStats()
-	logger.Info("Redis连接池状态",
+	logger.Info("Redis连接池预热完成",
 		"totalConns", stats.TotalConns,
 		"idleConns", stats.IdleConns,
-		"poolSize", minIdleConns,
 	)
-
-	if stats.IdleConns < uint32(minIdleConns)/2 {
-		return fmt.Errorf("预热不足，空闲连接数=%d，目标=%d", stats.IdleConns, minIdleConns)
-	}
 
 	return nil
 }

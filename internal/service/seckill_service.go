@@ -51,9 +51,7 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	userID := req.UserId
 	quantity := req.Quantity
 
-	// 1. 使用参与集合去重，避免SetNX+Del的两次往返
-	//    SADD 返回1表示首次参与，0表示已参与
-	//    在后续失败（发布消息或其他环节）时再进行SREM，允许重试
+	// 1. 使用参与集合去重，占用内存小
 	joinKey := fmt.Sprintf("seckill:joined:product:%d", productID)
 	jctx, jcancel := context.WithTimeout(ctx, 80*time.Millisecond)
 	defer jcancel()
@@ -65,6 +63,7 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 	if added == 0 {
 		return &seckill.SeckillResponse{Success: false, Message: "您已参与过该商品的秒杀，请勿重复下单"}, nil
 	}
+
 	// 仅在需要允许重试的失败场景下移除参与标记
 	removeJoinMark := func() {
 		c, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -78,10 +77,6 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 		removeJoinMark()
 		return &seckill.SeckillResponse{Success: false, Message: err.Error()}, nil
 	}
-
-	// 2.1 发送库存变更日志（非关键，不影响主流程）
-	// _ = s.publishStockLog(
-	// 		StockLogMessage{ProductID: productID, Delta: -quantity, Reason: "seckill_deduct", TimeUnix: time.Now().Unix()})
 
 	// 3. 获取商品信息计算总价
 	pctx, pcancel := context.WithTimeout(ctx, 120*time.Millisecond)
@@ -128,20 +123,13 @@ func (s *SeckillService) ExecuteSeckill(ctx context.Context, req *seckill.Seckil
 		_ = s.productDao.ReturnStock(context.Background(), productID, quantity)
 		// 发布失败，允许重试
 		removeJoinMark()
-		// _ = s.publishStockLog(StockLogMessage{ProductID: productID, Delta: quantity, Reason: "seckill_publish_fail", TimeUnix: time.Now().Unix()})
 		return &seckill.SeckillResponse{Success: false, Message: "秒杀失败，请重试"}, err
 	}
-	// 不再等待确认，改为异步处理（提高吞吐）
 
+	// 不再等待确认，改为异步处理（提高吞吐）
 	return &seckill.SeckillResponse{
 		Success: true,
 		Message: "秒杀成功，订单处理中",
 		OrderId: 0, // 订单ID将在异步处理后生成
 	}, nil
 }
-
-//
-//func (s *SeckillService) publishStockLog(m StockLogMessage) error {
-//	b, _ := json.Marshal(m)
-//	return s.mqPool.PublishAsync(mqExchange, "stock.change", b)
-//}

@@ -13,6 +13,7 @@ import (
 	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
+	"github.com/streadway/amqp"
 )
 
 type OrderCanceledEvent struct {
@@ -27,6 +28,8 @@ type OrderCanceledEvent struct {
 const (
 	queueOrderCanceled = "order.canceled"
 	eventDedupKeyFmt   = "event:order.canceled:%s"
+	// 死信交换机与队列配置
+	dlxName = "seckill.dlx"
 )
 
 func main() {
@@ -43,7 +46,13 @@ func main() {
 	}
 	productDao := dao.NewProductDao(db, rdb)
 
-	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, queueOrderCanceled, "order.canceled", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch)
+	// 1. 配置主队列参数，指定死信交换机
+	args := amqp.Table{
+		"x-dead-letter-exchange": dlxName,
+	}
+
+	// 2. 启动消费者，绑定 order.canceled
+	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, queueOrderCanceled, "order.canceled", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch, args)
 	if err != nil {
 		logger.Fatal("init consumer channel failed", "err", err)
 	}
@@ -57,9 +66,7 @@ func main() {
 			var evt OrderCanceledEvent
 			if err := json.Unmarshal(d.Body, &evt); err != nil {
 				logger.Error("取消事件解析失败", "err", err)
-				// 拒绝消费某条消息
-				// multiple 是否拒绝所有未确认的消息
-				// requeue 是否重新入队
+				// 拒绝消费某条消息，不重试，进入死信队列
 				d.Nack(false, false)
 				continue
 			}
@@ -68,6 +75,8 @@ func main() {
 			ok, derr := rdb.SetNX(context.Background(), dedupKey, 1, 24*time.Hour).Result()
 			if derr != nil {
 				logger.Error("去重键写入失败", "err", derr)
+				// 临时错误，允许重试（requeue=true）
+				// 或者也可以选择进入死信队列，视业务容忍度而定
 				d.Nack(false, true)
 				continue
 			}
@@ -78,9 +87,15 @@ func main() {
 			}
 			// 归还库存
 			if evt.Quantity > 0 && evt.ProductID > 0 {
+				// 注意：在激进派模式下，ReturnStock 应该只操作 Redis
+				// 因为 MySQL 的库存是由 Reconciler 异步同步的
+				// 如果这里直接操作 MySQL，可能会与 Reconciler 冲突
+				// 但考虑到取消订单是低频操作，且 ReturnStock 内部逻辑通常是先改 DB 再删缓存
+				// 为了保持一致性，建议 ReturnStock 也改为只操作 Redis（增加库存），并标记 dirty
 				if err := productDao.ReturnStock(context.Background(), evt.ProductID, evt.Quantity); err != nil {
 					logger.Error("归还库存失败", "product_id", evt.ProductID, "qty", evt.Quantity, "err", err)
-					d.Nack(false, true)
+					// 业务处理失败，进入死信队列，人工介入
+					d.Nack(false, false)
 					_ = rdb.Del(context.Background(), dedupKey).Err()
 					continue
 				}

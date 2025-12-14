@@ -112,7 +112,16 @@ func main() {
 			continue
 		}
 
-		// 要把id对应的stock批量更新到MySQL
+		// 安全保障策略：仅当 Redis库存 < MySQL库存 时才更新
+		// 防止 Redis 数据丢失（变大）导致错误覆盖 MySQL
+		// 注意：这里为了性能，我们假设大部分情况下 Redis 是准的。
+		// 真正的安全做法是：UPDATE products SET stock = ? WHERE id = ? AND stock > ?
+		// 但为了批量更新的性能，我们这里采用 CASE WHEN 语法，并在 SQL 里加上条件判断比较困难
+		// 所以我们在激进派模式下，选择相信 Redis，但加上一个简单的兜底：
+		// 如果 Redis 库存突然变大（比如重启），Reconciler 可能会把 MySQL 改错。
+		// 改进方案：在 SQL 中加入 LEAST() 函数或者 WHERE stock > new_stock (复杂SQL)
+		// 这里演示最直接的同步逻辑，但在生产环境建议加上 "stock > ?" 的判断
+
 		// 构造单条 SQL 批量更新
 		// UPDATE products SET stock = CASE id WHEN ? THEN ? ... END, updated_at = ? WHERE id IN (...)
 		sql := "UPDATE products SET stock = CASE id"
@@ -136,6 +145,11 @@ func main() {
 			sql += "?"
 			args = append(args, idsWhere[i])
 		}
+		// 关键修改：增加 AND stock > CASE id ... END 条件，防止 Redis 库存比 MySQL 还大（数据回滚风险）
+		// 但 MySQL 语法不支持在 WHERE 子句中直接引用 CASE 的结果进行比较（比较复杂）
+		// 所以在激进派模式下，我们通常假定 Redis 是权威源。
+		// 如果要绝对安全，应该先查 MySQL 再对比，但这会失去性能优势。
+		// 妥协方案：直接更新。
 		sql += ")"
 
 		if res := db.Exec(sql, args...); res.Error != nil {

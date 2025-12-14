@@ -194,6 +194,9 @@ func (dao *ProductDao) GetProductPrice(ctx context.Context, id int64) (float64, 
 
 // DeductStock 优化 - Lua脚本返回状态码，避免额外Redis调用
 func (dao *ProductDao) DeductStock(ctx context.Context, productID int64, quantity int32) error {
+	if quantity <= 0 {
+		return errors.New("扣减数量必须大于0")
+	}
 
 	redisKey := getProductStockKey(productID)
 
@@ -232,8 +235,6 @@ func (dao *ProductDao) DeductStock(ctx context.Context, productID int64, quantit
 	// 成功：stockResult是新库存值
 	logger.Debug("库存扣减成功", "product_id", productID, "quantity", quantity, "new_stock", stockResult)
 
-	// SAdd 向集合中添加成员
-
 	// 标记该商品库存已变更，交由对账批处理服务合并更新MySQL
 	_ = dao.redis.SAdd(ctx, productDirtySetKey, strconv.FormatInt(productID, 10)).Err()
 
@@ -248,7 +249,9 @@ func (dao *ProductDao) DeductStock(ctx context.Context, productID int64, quantit
 	dao.ClearProductCache(ctx, productID)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		dao.ClearProductCache(ctx, productID)
+		// Fix: 异步任务不能使用请求的ctx，因为请求结束ctx会被cancel，导致操作失败
+		// 使用 context.Background() 确保后台任务能执行
+		dao.ClearProductCache(context.Background(), productID)
 	}()
 
 	return nil
@@ -334,9 +337,9 @@ func (dao *ProductDao) ReturnStock(ctx context.Context, productID int64, quantit
 	returnValue := result.(int64)
 	switch returnValue {
 	case -1:
-		// 键不存在，从MySQL加载并归还
-		logger.Info("归还时库存键不存在，尝试加载", "product_id", productID)
-		return dao.initStockFromMySQLAndReturn(ctx, productID, quantity)
+		// 激进派策略：Redis是唯一真理。如果键不存在，说明数据丢失或未预热，不能贸然从MySQL加载（因为MySQL是归档，可能滞后）
+		// 此时应报错，进入死信队列，由人工确认处理
+		return errors.New("库存键不存在(Redis数据丢失)，无法归还，请人工介入")
 	case -2:
 		return errors.New("库存超过上限，异常")
 	}
@@ -349,25 +352,8 @@ func (dao *ProductDao) ReturnStock(ctx context.Context, productID int64, quantit
 	dao.ClearProductCache(ctx, productID)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		dao.ClearProductCache(ctx, productID)
+		dao.ClearProductCache(context.Background(), productID)
 	}()
 
 	return nil
-}
-
-// initStockFromMySQLAndReturn ReturnStock专用：加载库存并重新执行归还
-func (dao *ProductDao) initStockFromMySQLAndReturn(ctx context.Context, productID int64, quantity int32) error {
-	var product model.Product
-	if err := dao.db.WithContext(ctx).First(&product, productID).Error; err != nil {
-		return err
-	}
-
-	redisKey := getProductStockKey(productID)
-	// 加载库存后，重新执行归还（adjust场景）
-	if err := dao.redis.Set(ctx, redisKey, product.Stock, 0).Err(); err != nil {
-		return err
-	}
-
-	logger.Info("库存加载成功", "product_id", productID, "initial_stock", product.Stock)
-	return dao.ReturnStock(ctx, productID, quantity) // 重试归还
 }

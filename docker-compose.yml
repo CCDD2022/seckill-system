@@ -151,6 +151,22 @@ services:
     networks: [seckill-net]
     restart: unless-stopped
 
+  dlq-consumer:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+      args: { SERVICE_NAME: dlq_consumer }
+    container_name: seckill-dlq-consumer
+    environment:
+      - CONFIG_PATH=/app/config/config.yaml
+    depends_on:
+      mysql:
+        condition: service_healthy
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
+    networks: [seckill-net]
+    restart: unless-stopped
+
   api-gateway:
     build:
       context: .

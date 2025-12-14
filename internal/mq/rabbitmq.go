@@ -45,6 +45,7 @@ func Init(cfg *config.MQConfig) (*Pool, error) {
 
 	// 创建通道池
 	p := &Pool{conn: conn, channels: make(chan *ChannelWrapper, size), size: size}
+	// 创建异步确认信道 不会阻塞在这条信道上publish的goroutine
 	for i := 0; i < size; i++ {
 		cw, err := p.createChannelWrapper()
 		if err != nil {
@@ -60,6 +61,7 @@ func Init(cfg *config.MQConfig) (*Pool, error) {
 // createChannelWrapper 创建一个带异步确认处理的生产者通道包装
 func (p *Pool) createChannelWrapper() (*ChannelWrapper, error) {
 	ch, err := p.conn.Channel()
+	// 设置channel为异步确认模式
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +145,7 @@ func (p *Pool) PublishAsyncWithID(exchange, key string, body []byte, messageID s
 }
 
 // NewConsumerChannel 独立创建用于消费的连接与通道（不依赖生产者池）
-func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, durable bool, prefetch int) (*amqp.Connection, *amqp.Channel, <-chan amqp.Delivery, error) {
+func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, durable bool, prefetch int, args amqp.Table) (*amqp.Connection, *amqp.Channel, <-chan amqp.Delivery, error) {
 	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.User, cfg.Password, cfg.Host, cfg.Port)
 	conn, err := amqp.Dial(url)
 	if err != nil {
@@ -163,7 +165,7 @@ func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, d
 		}
 	}
 	// 声明队列
-	if _, err := ch.QueueDeclare(queue, durable, false, false, false, nil); err != nil {
+	if _, err := ch.QueueDeclare(queue, durable, false, false, false, args); err != nil {
 		ch.Close()
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("declare queue failed: %w", err)
@@ -184,6 +186,8 @@ func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, d
 			return nil, nil, nil, fmt.Errorf("set qos failed: %w", err)
 		}
 	}
+
+	// 生成消息通道   消费者通过这个获取消息
 	msgs, err := ch.Consume(queue, "", false, false, false, false, nil)
 	if err != nil {
 		ch.Close()

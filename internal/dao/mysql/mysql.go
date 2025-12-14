@@ -48,8 +48,6 @@ func InitDB(cfg *config.MySQLConfig) (*gorm.DB, error) {
 		&model.Order{},
 	)
 	return db, nil
-
-	
 }
 
 func GetDB() *gorm.DB {
