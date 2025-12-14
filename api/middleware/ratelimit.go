@@ -2,8 +2,6 @@ package middleware
 
 import (
 	"net/http"
-	"time"
-
 	"sync"
 
 	"github.com/CCDD2022/seckill-system/config"
@@ -30,33 +28,27 @@ func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
 	}
 }
 
-// AddIP 为IP创建限流器
-func (i *IPRateLimiter) AddIP(ip string) *rate.Limiter {
+// GetLimiter 获取该IP的限流器  如果没有 那么就创建
+func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
+	// 第一次检查：读锁（快速路径）
+	i.mu.RLock()
+	if limiter, exists := i.ips[ip]; exists {
+		i.mu.RUnlock()
+		return limiter
+	}
+	i.mu.RUnlock()
+
+	// 第二次检查 + 写入：写锁（慢路径）
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	// 双重检查 防止竞态 
+	// 双重检查
 	if limiter, exists := i.ips[ip]; exists {
-        return limiter
-    }
+		return limiter
+	}
 
 	limiter := rate.NewLimiter(i.r, i.b)
 	i.ips[ip] = limiter
-
-	return limiter
-}
-
-// GetLimiter 获取该IP的限流器  如果没有 那么就创建
-func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
-	i.mu.Lock()
-	limiter, exists := i.ips[ip]
-
-	if !exists {
-		i.mu.Unlock()
-		return i.AddIP(ip)
-	}
-
-	i.mu.Unlock()
 	return limiter
 }
 
@@ -95,19 +87,4 @@ func SeckillRateLimit(cfg *config.Config) gin.HandlerFunc {
 
 func OrderRateLimit(cfg *config.Config) gin.HandlerFunc {
 	return RateLimitMiddleware(rate.Limit(cfg.RateLimits.Order.RPS), cfg.RateLimits.Order.Burst)
-}
-
-// CleanupStaleIPs 定期清理不活跃的IP限流器
-func (i *IPRateLimiter) CleanupStaleIPs(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		i.mu.Lock()
-		// 清理超过1小时没有活动的IP
-		for ip := range i.ips {
-			delete(i.ips, ip)
-		}
-		i.mu.Unlock()
-	}
 }
