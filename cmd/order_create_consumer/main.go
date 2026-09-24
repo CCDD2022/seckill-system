@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
+	"math"
 	"time"
 
-	"github.com/CCDD2022/seckill-system/config"
+	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
 	redisinit "github.com/CCDD2022/seckill-system/internal/dao/redis"
 	"github.com/CCDD2022/seckill-system/internal/model"
@@ -14,7 +15,6 @@ import (
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/streadway/amqp"
-	"gorm.io/gorm"
 )
 
 type SeckillMessage struct {
@@ -30,7 +30,6 @@ const (
 	orderCreateKey   = "order.create"
 	// 死信交换机与队列配置
 	dlxName = "seckill.dlx"
-	dlqName = "order.create.dlq"
 )
 
 func main() {
@@ -41,13 +40,16 @@ func main() {
 		logger.Fatal("连接Mysql数据库失败", "err", err)
 	}
 
+	orderDao := dao.NewOrderDao(db)
 	rdb, err := redisinit.InitRedis(&cfg.Database.Redis)
 	if err != nil {
 		logger.Fatal("连接Redis失败", "err", err)
 	}
+	defer rdb.Close()
+	productDao := dao.NewProductDao(db, rdb)
 
 	// 1. 初始化死信队列基础设施 (DLX + DLQ)
-	if err := setupDLQ(&cfg.MQ); err != nil {
+	if err := mq.EnsureOrderDeadLetters(&cfg.MQ); err != nil {
 		logger.Fatal("setup dlq failed", "err", err)
 	}
 
@@ -66,17 +68,6 @@ func main() {
 	logger.Info("Order Create Consumer started with DLQ support")
 
 	for d := range msgs {
-		key := "seckill:msg:done:" + d.MessageId
-		// 幂等：如果MessageId存在则用Redis去重
-		if d.MessageId != "" {
-			added, _ := rdb.SetNX(context.Background(), key, 1, 30*time.Minute).Result()
-			if !added {
-				// 如果已经存在，说明已经处理过，直接ACK
-				logger.Error("Duplicate message detected, skipping", "message_id", d.MessageId)
-				_ = d.Ack(false)
-				continue
-			}
-		}
 		var m SeckillMessage
 		if err := json.Unmarshal(d.Body, &m); err != nil {
 			logger.Error("订单创建消息解析失败", "err", err)
@@ -84,63 +75,53 @@ func main() {
 			_ = d.Nack(false, false)
 			continue
 		}
-		// 事务：仅创建订单（库存扣减已由Redis+Reconciler保障）
-		err = db.Transaction(func(tx *gorm.DB) error {
-			// 1. 激进派策略：不再扣减MySQL库存，直接信任Redis的扣减结果
-			// 优势：数据库写入性能翻倍（少了一次行锁竞争和Update操作）
-			// 风险：如果Redis挂了且数据丢失，MySQL库存会偏多（少卖），但绝不会超卖（因为Redis挡住了）
-
-			// 2. 创建订单
-			order := &model.Order{
-				UserID:     m.UserID,
-				ProductID:  m.ProductID,
-				Quantity:   m.Quantity,
-				TotalPrice: m.TotalPrice,
-				Status:     model.OrderStatusPending,
-			}
-			return tx.Create(order).Error
-		})
-		if err != nil {
-			logger.Error("处理消息失败", "err", err)
-			// 关键修改：requeue=false，将失败消息投递到死信队列，防止无限循环
+		if d.MessageId == "" || m.UserID <= 0 || m.ProductID <= 0 || m.Quantity <= 0 || m.TotalPrice < 0 || math.IsNaN(m.TotalPrice) || math.IsInf(m.TotalPrice, 0) {
+			logger.Error("invalid order creation delivery", "message_id", d.MessageId)
 			_ = d.Nack(false, false)
-			rdb.Del(context.Background(), key) // 消费失败，删除幂等key，允许重试（如果后续有人处理死信队列并重发）
 			continue
 		}
-		_ = d.Ack(false)
+		compensated, err := productDao.IsReservationCompensated(context.Background(), d.MessageId)
+		if err != nil {
+			// Without this marker check, a manually compensated reservation
+			// could be materialized into an order on a delayed redelivery.
+			logger.Error("compensation marker unavailable; delivery retained", "message_id", d.MessageId, "err", err)
+			_ = d.Nack(false, true)
+			time.Sleep(time.Second)
+			continue
+		}
+		if compensated {
+			logger.Warn("compensated reservation delivery refused", "message_id", d.MessageId)
+			_ = d.Nack(false, false)
+			continue
+		}
+		messageID := d.MessageId
+		order := &model.Order{
+			UserID:          m.UserID,
+			ProductID:       m.ProductID,
+			Quantity:        m.Quantity,
+			TotalPrice:      m.TotalPrice,
+			Status:          model.OrderStatusPending,
+			SourceMessageID: &messageID,
+		}
+		created, err := orderDao.CreateOrderOnce(context.Background(), order)
+		if err != nil {
+			if errors.Is(err, dao.ErrOrderConflict) {
+				logger.Error("permanent order delivery conflict; dead lettering", "message_id", d.MessageId, "err", err)
+				_ = d.Nack(false, false)
+			} else {
+				// MySQL outages are transient. Keep the persistent broker message
+				// available for recovery instead of archiving every failed attempt.
+				logger.Error("order database unavailable; will retry", "message_id", d.MessageId, "err", err)
+				time.Sleep(time.Second)
+				_ = d.Nack(false, true)
+			}
+			continue
+		}
+		if !created {
+			logger.Info("duplicate order delivery", "message_id", d.MessageId)
+		}
+		if err := d.Ack(false); err != nil {
+			logger.Error("order delivery ACK failed; broker will redeliver", "message_id", d.MessageId, "err", err)
+		}
 	}
-}
-
-// setupDLQ 声明死信交换机和死信队列
-func setupDLQ(cfg *config.MQConfig) error {
-	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.User, cfg.Password, cfg.Host, cfg.Port)
-	conn, err := amqp.Dial(url)
-	if err != nil {
-		return fmt.Errorf("dial rabbitmq failed: %w", err)
-	}
-	defer conn.Close()
-
-	ch, err := conn.Channel()
-	if err != nil {
-		return fmt.Errorf("open channel failed: %w", err)
-	}
-	defer ch.Close()
-
-	// 1. 声明死信交换机 (修改为 Topic 类型，以便接收所有死信)
-	if err := ch.ExchangeDeclare(dlxName, "topic", true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare dlx failed: %w", err)
-	}
-
-	// 2. 声明死信队列
-	if _, err := ch.QueueDeclare(dlqName, true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare dlq failed: %w", err)
-	}
-
-	// 3. 绑定死信队列到死信交换机
-	// 使用 "#" 接收所有死信消息（包括 order.create 和 order.canceled）
-	if err := ch.QueueBind(dlqName, "#", dlxName, false, nil); err != nil {
-		return fmt.Errorf("bind dlq failed: %w", err)
-	}
-
-	return nil
 }

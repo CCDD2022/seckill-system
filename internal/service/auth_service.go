@@ -3,13 +3,17 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/model"
 	"github.com/CCDD2022/seckill-system/pkg/e"
 	"github.com/CCDD2022/seckill-system/pkg/utils"
 	"github.com/CCDD2022/seckill-system/proto_output/auth"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
@@ -29,13 +33,20 @@ func NewAuthService(authDao *dao.AuthDao, jwtSecret string, jwtExpireHours int) 
 }
 
 func (s *AuthService) Register(ctx context.Context, req *auth.RegisterRequest) (*auth.RegisterResponse, error) {
+	if req == nil || strings.TrimSpace(req.Username) == "" || len(req.Password) < 8 {
+		return &auth.RegisterResponse{Code: e.INVALID_PARAMS, Message: "用户名不能为空，密码至少 8 位"}, nil
+	}
+	// 管理员只能通过受控的数据库运维流程授予，公开注册永远创建普通用户。
+	if strings.EqualFold(strings.TrimSpace(req.Username), "admin") {
+		return &auth.RegisterResponse{
+			Code:    e.INVALID_PARAMS,
+			Message: "该用户名不可注册",
+		}, nil
+	}
 	// 检查用户是否存在
 	exists, err := s.authDao.UserExists(ctx, req.Username)
 	if err != nil {
-		return &auth.RegisterResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "registration database unavailable")
 	}
 	if exists {
 		return &auth.RegisterResponse{
@@ -46,15 +57,13 @@ func (s *AuthService) Register(ctx context.Context, req *auth.RegisterRequest) (
 	// 加密密码
 	passwordHash, err := utils.HashPassword(req.Password)
 	if err != nil {
-		return &auth.RegisterResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Internal, "password hashing failed")
 	}
 	// 创建一个model层的用户给下层dao层存储
 	newUser := &model.User{
 		Username:     req.Username,
 		PasswordHash: passwordHash,
+		IsAdmin:      false,
 		Email:        req.Email,
 		Phone:        req.Phone,
 	}
@@ -62,10 +71,11 @@ func (s *AuthService) Register(ctx context.Context, req *auth.RegisterRequest) (
 	// 调用dao层  执行数据库操作
 	err = s.authDao.CreateUser(ctx, newUser)
 	if err != nil {
-		return &auth.RegisterResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		var sqlErr *mysqlDriver.MySQLError
+		if errors.As(err, &sqlErr) && sqlErr.Number == 1062 {
+			return &auth.RegisterResponse{Code: e.ERROR_USER_EXISTS, Message: e.GetMsg(e.ERROR_USER_EXISTS)}, nil
+		}
+		return nil, status.Error(codes.Unavailable, "registration database unavailable")
 	}
 
 	// 返回用户信息
@@ -86,6 +96,9 @@ func (s *AuthService) Register(ctx context.Context, req *auth.RegisterRequest) (
 }
 
 func (s *AuthService) Login(ctx context.Context, req *auth.LoginRequest) (*auth.LoginResponse, error) {
+	if req == nil || strings.TrimSpace(req.Username) == "" || req.Password == "" {
+		return nil, status.Error(codes.InvalidArgument, "username and password are required")
+	}
 	// 获取用户信息
 	dbUser, err := s.authDao.GetUserByUsername(ctx, req.Username)
 	if err != nil {
@@ -96,10 +109,7 @@ func (s *AuthService) Login(ctx context.Context, req *auth.LoginRequest) (*auth.
 				Message: e.GetMsg(e.ERROR_USER_NOT_EXISTS),
 			}, nil
 		}
-		return &auth.LoginResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "authentication database unavailable")
 	}
 
 	// 验证密码
@@ -112,12 +122,9 @@ func (s *AuthService) Login(ctx context.Context, req *auth.LoginRequest) (*auth.
 	}
 
 	// 生成 token
-	token, err := s.jwtUtil.GenerateToken(dbUser.ID, dbUser.Username)
+	token, err := s.jwtUtil.GenerateToken(dbUser.ID, dbUser.Username, dbUser.IsAdmin)
 	if err != nil {
-		return &auth.LoginResponse{
-			Code:    e.ERROR_AUTH_TOKEN,
-			Message: e.GetMsg(e.ERROR_AUTH_TOKEN),
-		}, err
+		return nil, status.Error(codes.Internal, "token generation failed")
 	}
 
 	// 返回用户信息

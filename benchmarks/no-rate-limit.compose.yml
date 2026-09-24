@@ -1,0 +1,9 @@
+# For isolated benchmark projects only. The normal local stack keeps its
+# configured gateway token buckets.
+services:
+  api-gateway:
+    environment:
+      RATE_LIMITS_GLOBAL_RPS: "100000"
+      RATE_LIMITS_GLOBAL_BURST: "100000"
+      RATE_LIMITS_SECKILL_RPS: "100000"
+      RATE_LIMITS_SECKILL_BURST: "100000"

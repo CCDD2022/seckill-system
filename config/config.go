@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -103,17 +105,29 @@ type RateLimitsConfig struct {
 }
 
 func InitConfig(configPath string) (*Config, error) {
-	viper.SetConfigFile(configPath)
-	viper.SetConfigType("yaml")
+	v := viper.New()
+	v.SetConfigFile(configPath)
+	v.SetConfigType("yaml")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
 	// 读取内容
-	if err := viper.ReadInConfig(); err != nil {
+	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("读取配置文件失败:%v", err)
 	}
 
 	var globalConfig Config
-	if err := viper.Unmarshal(&globalConfig); err != nil {
+	if err := v.Unmarshal(&globalConfig); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败:%v", err)
+	}
+	if err := readSecretFile("DATABASE_MYSQL_PASSWORD_FILE", &globalConfig.Database.Mysql.Password); err != nil {
+		return nil, err
+	}
+	if err := readSecretFile("MQ_PASSWORD_FILE", &globalConfig.MQ.Password); err != nil {
+		return nil, err
+	}
+	if err := readSecretFile("JWT_SECRET_FILE", &globalConfig.JWT.Secret); err != nil {
+		return nil, err
 	}
 
 	applyRateLimitDefaults(&globalConfig)
@@ -124,6 +138,9 @@ func InitConfig(configPath string) (*Config, error) {
 // LoadConfig 加载配置文件并返回配置对象
 // 这个函数简化了配置加载过程，默认加载config.yaml
 func LoadConfig() (*Config, error) {
+	if path := os.Getenv("CONFIG_PATH"); path != "" {
+		return InitConfig(path)
+	}
 	cfg, err := InitConfig("./config/config.yaml")
 	if err != nil {
 		// 尝试当前目录
@@ -134,6 +151,23 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func readSecretFile(envKey string, destination *string) error {
+	path := strings.TrimSpace(os.Getenv(envKey))
+	if path == "" {
+		return nil
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("读取 %s 指定的凭据文件失败: %w", envKey, err)
+	}
+	value := strings.TrimSpace(string(content))
+	if value == "" {
+		return fmt.Errorf("%s 指定的凭据文件为空", envKey)
+	}
+	*destination = value
+	return nil
 }
 
 // applyRateLimitDefaults 补充默认限流配置避免零值导致意外无限制或过度阻塞

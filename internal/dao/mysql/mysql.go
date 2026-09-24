@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -38,15 +39,40 @@ func InitDB(cfg *config.MySQLConfig) (*gorm.DB, error) {
 		return nil, fmt.Errorf("获取原生DB失败: %v", err)
 	}
 	// 调整连接池：适度增加空闲数，设定生命周期防止长连接阻塞复用
+	if cfg.MaxOpenConns < 2 {
+		return nil, fmt.Errorf("max_open_conns must be at least 2 for schema migration")
+	}
 	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns * 2)
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 
-	db.AutoMigrate(
+	// All services start together in Compose. Serialize their schema checks so
+	// fresh databases do not race to create the same table or unique index.
+	migrationCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	lockConn, err := sqlDB.Conn(migrationCtx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer lockConn.Close()
+	var lockGranted int
+	if err := lockConn.QueryRowContext(migrationCtx, "SELECT GET_LOCK('seckill_schema_migration', 45)").Scan(&lockGranted); err != nil || lockGranted != 1 {
+		return nil, fmt.Errorf("acquire migration lock: granted=%d err=%v", lockGranted, err)
+	}
+	defer func() {
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer releaseCancel()
+		_, _ = lockConn.ExecContext(releaseCtx, "SELECT RELEASE_LOCK('seckill_schema_migration')")
+	}()
+	if err := db.AutoMigrate(
 		&model.User{},
 		&model.Product{},
 		&model.Order{},
-	)
+		&model.OutboxEvent{},
+		&model.DeadLetter{},
+	); err != nil {
+		return nil, fmt.Errorf("database schema migration failed: %w", err)
+	}
 	return db, nil
 }
 

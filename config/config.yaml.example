@@ -47,7 +47,7 @@ database:
     host: localhost
     port: 3306
     user: root
-    password: your_password_here
+    password: "" # Set DATABASE_MYSQL_PASSWORD or DATABASE_MYSQL_PASSWORD_FILE
     dbname: seckill_shop
     max_open_conns: 200
     max_idle_conns: 50
@@ -60,7 +60,7 @@ database:
 
 # JWT配置
 jwt:
-  secret: "your-secret-key-change-in-production"
+  secret: "" # Set JWT_SECRET or JWT_SECRET_FILE
   expire_hours: 72
 
 # RabbitMQ配置 + 批处理参数 / 消费预取
@@ -68,7 +68,7 @@ mq:
   host: localhost
   port: 5672
   user: guest
-  password: guest
+  password: "" # Set MQ_PASSWORD or MQ_PASSWORD_FILE
   channel_pool_size: 8
   consumer_prefetch: 1
 

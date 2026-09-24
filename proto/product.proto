@@ -15,9 +15,6 @@ service ProductService {
   // 获取可秒杀商品列表
   rpc ListActiveSeckillProducts(ListProductsRequest) returns (ListProductsResponse);
 
-  // 库存操作
-  rpc DeductStock(DeductStockRequest) returns (DeductStockResponse);
-  rpc ReturnStock(ReturnStockRequest) returns (ReturnStockResponse);
 }
 
 
@@ -104,26 +101,3 @@ message DeleteProductResponse {
   int32 code = 1;
   string message = 2;
 }
-
-// ---【新增】库存操作的消息定义 ---
-message DeductStockRequest {
-  int64 product_id = 1;
-  int32 quantity = 2;
-}
-message DeductStockResponse {
-  bool success = 1;
-  string message = 2;
-}
-
-message ReturnStockRequest {
-  int64 product_id = 1;
-  int32 quantity = 2;
-}
-message ReturnStockResponse {
-  bool success = 1;
-  string message = 2;
-}
-
-
-
-

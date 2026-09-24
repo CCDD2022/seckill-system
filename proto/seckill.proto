@@ -6,6 +6,7 @@ option go_package = "proto_output/seckill";
 
 service SeckillService {
   rpc ExecuteSeckill(SeckillRequest) returns (SeckillResponse);
+  rpc GetReservationStatus(GetReservationStatusRequest) returns (GetReservationStatusResponse);
 }
 
 message SeckillRequest {
@@ -17,5 +18,16 @@ message SeckillRequest {
 message SeckillResponse {
   bool success = 1;
   string message = 2;
-  int64 order_id = 3;
+  int64 order_id = 3 [deprecated = true]; // acceptance precedes order creation
+}
+
+message GetReservationStatusRequest {
+  int64 user_id = 1;
+  int64 product_id = 2;
+}
+
+message GetReservationStatusResponse {
+  string state = 1; // processing, order_created, recovery_pending, failed
+  int64 order_id = 2; // set only after persistence
+  int32 order_status = 3; // 0 pending payment, 1 paid, 2 cancelled, 3 completed
 }
