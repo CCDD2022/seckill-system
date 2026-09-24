@@ -1,55 +1,65 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"time"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 
+	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
+	"github.com/CCDD2022/seckill-system/internal/model"
 	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
-)
-
-const (
-	dlqName = "order.create.dlq"
+	"github.com/streadway/amqp"
+	"gorm.io/gorm/clause"
 )
 
 func main() {
 	cfg := app.BootstrapApp()
-
-	// 独立连接，避免影响主业务
-	// 这里不需要绑定交换机，因为 setupDLQ 已经绑定好了，直接消费队列即可
-	conn, ch, msgs, err := mq.NewConsumerChannel(&cfg.MQ, dlqName, "", "", true, 10, nil)
+	db, err := mysql.InitDB(&cfg.Database.Mysql)
+	if err != nil {
+		logger.Fatal("DLQ archive database init failed", "err", err)
+	}
+	if err := mq.EnsureOrderDeadLetters(&cfg.MQ); err != nil {
+		logger.Fatal("DLQ topology init failed", "err", err)
+	}
+	conn, ch, msgs, err := mq.NewConsumerChannel(&cfg.MQ, "order.create.dlq", "", "", true, 10, nil)
 	if err != nil {
 		logger.Fatal("DLQ consumer init failed", "err", err)
 	}
 	defer mq.CloseConsumer(conn, ch)
-
-	logger.Info("DLQ Monitor started", "queue", dlqName)
-
-	// 打开报警日志文件
-	f, err := os.OpenFile("dlq_alarm.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		logger.Fatal("open dlq log file failed", "err", err)
-	}
-	defer f.Close()
+	logger.Info("DLQ archive consumer started")
 
 	for d := range msgs {
-		// 1. 记录报警日志
-		logContent := fmt.Sprintf("[%s] ALARM: Dead Letter Received | MsgID: %s | Body: %s\n",
-			time.Now().Format(time.DateTime),
-			d.MessageId,
-			string(d.Body))
-
-		if _, err := f.WriteString(logContent); err != nil {
-			logger.Error("write dlq log failed", "err", err)
+		record := archiveRecord(d)
+		if err := db.WithContext(context.Background()).Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error; err != nil {
+			// Keep this message in RabbitMQ if the durable archive is unavailable.
+			// Closing the channel requeues all unacknowledged deliveries.
+			logger.Error("DLQ archive failed; leaving delivery unacknowledged", "message_id", d.MessageId, "err", err)
+			return
 		}
+		logger.Warn("dead letter archived", "message_id", d.MessageId, "archive_key", record.DeliveryKey)
+		if err := d.Ack(false); err != nil {
+			logger.Error("DLQ ACK failed; broker will redeliver", "message_id", d.MessageId, "err", err)
+			return
+		}
+	}
+}
 
-		// 2. 打印到控制台方便调试
-		logger.Warn("ALARM: Dead letter received", "msg_id", d.MessageId)
-
-		// 3. 确认消息（表示报警已处理，避免死信堆积）
-		// 实际场景中可能需要人工确认后再Ack，或者转存到数据库
-		_ = d.Ack(false)
+func archiveRecord(d amqp.Delivery) model.DeadLetter {
+	h := sha256.New()
+	h.Write([]byte(d.MessageId))
+	h.Write([]byte{0})
+	h.Write([]byte(d.Exchange))
+	h.Write([]byte{0})
+	h.Write([]byte(d.RoutingKey))
+	h.Write([]byte{0})
+	h.Write(d.Body)
+	return model.DeadLetter{
+		DeliveryKey: hex.EncodeToString(h.Sum(nil)),
+		MessageID:   d.MessageId,
+		Exchange:    d.Exchange,
+		RoutingKey:  d.RoutingKey,
+		Body:        append([]byte{}, d.Body...),
 	}
 }

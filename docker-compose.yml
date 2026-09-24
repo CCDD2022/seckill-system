@@ -1,195 +1,201 @@
-# 生产环境编排：Redis 与 RabbitMQ 由宿主机自启动，前端已由 Nginx 提供静态资源与 /api 反代。
+# Local development stack. Only the HTTP gateway is published on the host.
+x-base-deps: &base-deps
+  mysql: {condition: service_healthy}
+  redis: {condition: service_healthy}
+  rabbitmq: {condition: service_healthy}
+
+x-after-auth: &after-auth
+  <<: *base-deps
+  auth-service: {condition: service_healthy}
+
+x-app-common: &app-common
+  restart: unless-stopped
+  environment:
+    CONFIG_PATH: /app/config/config.yaml
+    DATABASE_MYSQL_PASSWORD_FILE: /run/seckill-secrets/mysql_app_password
+    MQ_PASSWORD_FILE: /run/seckill-secrets/rabbitmq_password
+    JWT_SECRET_FILE: /run/seckill-secrets/jwt_secret
+  volumes:
+    - secrets_data:/run/seckill-secrets:ro
+  depends_on: *base-deps
+  networks: [seckill-net]
+
 services:
+  secret-init:
+    image: alpine:3.21
+    command: ["sh", "/init-secrets.sh"]
+    network_mode: none
+    volumes:
+      - secrets_data:/run/seckill-secrets
+      - mysql_root_secrets:/run/mysql-root-secret
+      - ./deploy/init-secrets.sh:/init-secrets.sh:ro
+    restart: "no"
+
   mysql:
-    image: mysql:8.0.19
-    container_name: mysql8019
-    restart: unless-stopped
+    image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: root1234
+      MYSQL_ROOT_PASSWORD_FILE: /run/mysql-root-secret/mysql_root_password
       MYSQL_DATABASE: seckill_shop
+      MYSQL_USER: seckill
+      MYSQL_PASSWORD_FILE: /run/seckill-secrets/mysql_app_password
       TZ: Asia/Shanghai
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-    ports:
-      - "3306:3306"
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     volumes:
       - mysql_data:/var/lib/mysql
-      - /home/cwx/my.conf:/etc/mysql/conf.d/my.cnf:ro
+      - secrets_data:/run/seckill-secrets:ro
+      - mysql_root_secrets:/run/mysql-root-secret:ro
+    depends_on:
+      secret-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot1234"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost --silent"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+    networks: [seckill-net]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+    networks: [seckill-net]
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_CONFIG_FILE: /run/seckill-secrets/rabbitmq.conf
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - secrets_data:/run/seckill-secrets:ro
+    depends_on:
+      secret-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
     networks: [seckill-net]
 
   auth-service:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: auth_service }
-    container_name: seckill-auth-service
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: auth_service}}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "auth-service", "50053"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 20s
 
   user-service:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: user_service }
-    container_name: seckill-user-service
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: user_service}}
+    depends_on: *after-auth
 
   product-service:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: product_service }
-    container_name: seckill-product-service
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: product_service}}
+    depends_on: *after-auth
 
   seckill-service:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: seckill_service }
-    container_name: seckill-seckill-service
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    ports:
-      - "50053:50053"
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: seckill_service}}
+    depends_on: *after-auth
 
   order-service:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: order_service }
-    container_name: seckill-order-service
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: order_service}}
+    depends_on: *after-auth
 
   order-create-consumer:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: order_create_consumer }
-    container_name: seckill-order-create-consumer
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: order_create_consumer}}
+    depends_on: *after-auth
 
   order-cancel-consumer:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: order_cancel_consumer }
-    container_name: seckill-order-cancel-consumer
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: order_cancel_consumer}}
+    depends_on: *after-auth
+
+  reservation-relay:
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: reservation_relay}}
+    depends_on: *after-auth
+
+  order-outbox-relay:
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: order_outbox_relay}}
+    depends_on: *after-auth
 
   stock-reconciler:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: stock_reconciler }
-    container_name: seckill-stock-reconciler
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: stock_reconciler}}
+    depends_on: *after-auth
 
   dlq-consumer:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: dlq_consumer }
-    container_name: seckill-dlq-consumer
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
-    depends_on:
-      mysql:
-        condition: service_healthy
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
-    networks: [seckill-net]
-    restart: unless-stopped
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: dlq_consumer}}
+    depends_on: *after-auth
+
+  replay-dead-letter:
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: replay_dead_letter}}
+    entrypoint: ["/app/service"]
+    profiles: [tools]
+    restart: "no"
+    depends_on: *after-auth
+
+  compensate-dead-letter:
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: compensate_dead_letter}}
+    entrypoint: ["/app/service"]
+    profiles: [tools]
+    restart: "no"
+    depends_on: *after-auth
+
+  bench-http:
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: bench_http}}
+    entrypoint: ["/app/service"]
+    profiles: [tools]
+    restart: "no"
+    depends_on: *after-auth
 
   api-gateway:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-      args: { SERVICE_NAME: api_gateway }
-    container_name: seckill-api-gateway
-    environment:
-      - CONFIG_PATH=/app/config/config.yaml
+    <<: *app-common
+    build: {context: ., args: {SERVICE_NAME: api_gateway}}
     depends_on:
-      - auth-service
-      - user-service
-      - product-service
-      - seckill-service
-      - order-service
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
+      auth-service: {condition: service_healthy}
+      user-service: {condition: service_started}
+      product-service: {condition: service_started}
+      seckill-service: {condition: service_started}
+      order-service: {condition: service_started}
     ports:
-      - "8080:8080"
-    networks: [seckill-net]
-    restart: unless-stopped
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 20s
 
 volumes:
   mysql_data:
+  redis_data:
+  rabbitmq_data:
+  secrets_data:
+  mysql_root_secrets:
 
 networks:
   seckill-net:

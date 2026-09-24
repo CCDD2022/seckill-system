@@ -10,10 +10,10 @@ import (
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/model"
-	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/pkg/e"
-	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/CCDD2022/seckill-system/proto_output/order"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
@@ -30,47 +30,28 @@ const orderCanceledKey = "order.canceled"
 
 type OrderService struct {
 	orderDao *dao.OrderDao
-	mqPool   *mq.Pool
 	order.UnimplementedOrderServiceServer
 }
 
-// NewOrderServiceWithMQ 带MQ发布能力的订单服务（使用生产者池）
-func NewOrderServiceWithMQ(orderDao *dao.OrderDao, mqPool *mq.Pool) *OrderService {
-	return &OrderService{
-		orderDao: orderDao,
-		mqPool:   mqPool,
-	}
+func NewOrderService(orderDao *dao.OrderDao) *OrderService {
+	return &OrderService{orderDao: orderDao}
 }
 
 // CreateOrder 创建订单
 func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRequest) (*order.CreateOrderResponse, error) {
-	// 创建订单模型  待支付
-	newOrder := &model.Order{
-		UserID:     req.UserId,
-		ProductID:  req.ProductId,
-		Quantity:   req.Quantity,
-		TotalPrice: req.TotalPrice,
-		Status:     model.OrderStatusPending,
-	}
-
-	// 保存到数据库
-	err := s.orderDao.CreateOrder(ctx, newOrder)
-	if err != nil {
-		return &order.CreateOrderResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
-	}
-
-	return &order.CreateOrderResponse{
-		Code:    e.SUCCESS,
-		Message: e.GetMsg(e.SUCCESS),
-		OrderId: newOrder.ID,
-	}, nil
+	// Only the reservation consumer may create an order. This old RPC bypassed
+	// both stock reservation and the unique message identity.
+	return nil, status.Error(codes.Unimplemented, "order creation is consumer-only")
 }
 
 // GetOrder 获取订单详情
 func (s *OrderService) GetOrder(ctx context.Context, req *order.GetOrderRequest) (*order.GetOrderResponse, error) {
+	if req == nil || req.OrderId <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "order ID must be positive")
+	}
+	if req.UserId <= 0 {
+		return &order.GetOrderResponse{Code: e.ERROR_AUTH, Message: e.GetMsg(e.ERROR_AUTH)}, nil
+	}
 	orderData, err := s.orderDao.GetOrderByID(ctx, req.OrderId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -79,10 +60,11 @@ func (s *OrderService) GetOrder(ctx context.Context, req *order.GetOrderRequest)
 				Message: "订单不存在",
 			}, nil
 		}
-		return &order.GetOrderResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "order store unavailable")
+	}
+	if orderData.UserID != req.UserId {
+		// 避免向其他用户透露该订单是否存在。
+		return &order.GetOrderResponse{Code: e.ERROR_NOT_EXIST, Message: "订单不存在"}, nil
 	}
 
 	orderProto := &order.Order{
@@ -105,12 +87,12 @@ func (s *OrderService) GetOrder(ctx context.Context, req *order.GetOrderRequest)
 
 // ListUserOrders 获取用户订单列表
 func (s *OrderService) ListUserOrders(ctx context.Context, req *order.ListUserOrdersRequest) (*order.ListUserOrdersResponse, error) {
+	if req == nil || req.UserId <= 0 || req.Page <= 0 || req.PageSize <= 0 || req.PageSize > 100 {
+		return nil, status.Error(codes.InvalidArgument, "order query parameters are invalid")
+	}
 	orders, total, err := s.orderDao.GetUserOrders(ctx, req.UserId, req.Page, req.PageSize)
 	if err != nil {
-		return &order.ListUserOrdersResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "order store unavailable")
 	}
 
 	var orderList []*order.Order
@@ -137,13 +119,16 @@ func (s *OrderService) ListUserOrders(ctx context.Context, req *order.ListUserOr
 
 // CancelOrder 取消订单
 func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRequest) (*order.CancelOrderResponse, error) {
+	if req == nil || req.OrderId <= 0 || req.UserId <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "cancellation parameters are invalid")
+	}
 	// 读取订单用于校验与事件载荷
 	ord, getErr := s.orderDao.GetOrderByID(ctx, req.OrderId)
 	if getErr != nil {
 		if errors.Is(getErr, gorm.ErrRecordNotFound) {
 			return &order.CancelOrderResponse{Code: e.ERROR_NOT_EXIST, Message: "订单不存在"}, nil
 		}
-		return &order.CancelOrderResponse{Code: e.ERROR, Message: "查询订单失败"}, getErr
+		return nil, status.Error(codes.Unavailable, "order store unavailable")
 	}
 
 	// 订单ID和执行人ID校验
@@ -152,64 +137,55 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 	}
 
 	// 仅允许待支付订单取消
+	if ord.Status == model.OrderStatusCancelled {
+		return &order.CancelOrderResponse{Code: e.SUCCESS, Message: "订单已取消"}, nil
+	}
 	if ord.Status != model.OrderStatusPending {
-		// 非待支付状态不执行取消与回补（幂等/避免多次回补）
-		return &order.CancelOrderResponse{Code: e.SUCCESS, Message: "订单状态不可取消或已处理"}, nil
+		return &order.CancelOrderResponse{Code: e.ERROR_ORDER_STATUS_CHANGED, Message: "订单状态不可取消"}, nil
 	}
 
-	// 状态改为Canceled
-	err := s.orderDao.CancelOrder(ctx, req.OrderId)
+	// The state transition and its event must commit together. The relay
+	// publishes from outbox_events, and the consumer restores stock once.
+	evt := orderCanceledEvent{
+		EventID:    deterministicEventID(req.OrderId, ord.ProductID, req.UserId, "cancel"),
+		OccurredAt: time.Now().Unix(), OrderID: req.OrderId, UserID: req.UserId,
+		ProductID: ord.ProductID, Quantity: ord.Quantity,
+	}
+	payload, err := json.Marshal(evt)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, status.Error(codes.Internal, "cancellation event generation failed")
+	}
+	err = s.orderDao.CancelOrderWithOutbox(ctx, req.OrderId, &model.OutboxEvent{
+		EventID: evt.EventID, RoutingKey: orderCanceledKey, Payload: string(payload),
+	})
+	if err != nil {
+		if errors.Is(err, dao.ErrOrderStatusChanged) {
 			return &order.CancelOrderResponse{
 				Code:    e.ERROR_ORDER_STATUS_CHANGED,
 				Message: e.GetMsg(e.ERROR_ORDER_STATUS_CHANGED),
 			}, nil
 		}
-		return &order.CancelOrderResponse{
-			Code:    e.ERROR,
-			Message: "取消订单失败",
-		}, err
-	}
-
-	// 发布取消事件（生产者池异步发布，不等待确认）
-	if s.mqPool != nil {
-		// 使用确定性幂等ID（不包含时间）避免重复取消产生不同事件ID
-		evt := orderCanceledEvent{
-			EventID:    deterministicEventID(req.OrderId, ord.ProductID, req.UserId, "cancel"),
-			OccurredAt: time.Now().Unix(),
-			OrderID:    req.OrderId,
-			UserID:     req.UserId,
-			ProductID:  ord.ProductID,
-			Quantity:   ord.Quantity,
-		}
-		if b, mErr := json.Marshal(evt); mErr == nil {
-			// 使用事件ID作为 AMQP MessageId，实现跨队列幂等追踪
-			if err := s.mqPool.PublishAsyncWithID("seckill.exchange", orderCanceledKey, b, evt.EventID); err != nil {
-				logger.Warn("订单取消事件发布失败", "order_id", req.OrderId, "err", err)
-			} else {
-				logger.Info("订单取消事件已发布", "order_id", req.OrderId, "product_id", ord.ProductID, "qty", ord.Quantity, "event_id", evt.EventID)
-			}
-		} else {
-			logger.Warn("订单取消事件序列化失败", "order_id", req.OrderId, "err", mErr)
-		}
+		return nil, status.Error(codes.Unavailable, "order store unavailable")
 	}
 
 	return &order.CancelOrderResponse{
 		Code:    e.SUCCESS,
-		Message: "订单已取消",
+		Message: "订单已取消，库存回补处理中",
 	}, nil
 }
 
 // PayOrder 支付订单（模拟）
 func (s *OrderService) PayOrder(ctx context.Context, req *order.PayOrderRequest) (*order.PayOrderResponse, error) {
+	if req == nil || req.OrderId <= 0 || req.UserId <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "payment parameters are invalid")
+	}
 
 	ord, err := s.orderDao.GetOrderByID(ctx, req.OrderId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &order.PayOrderResponse{Code: e.ERROR_NOT_EXIST, Message: "订单不存在"}, nil
 		}
-		return &order.PayOrderResponse{Code: e.ERROR, Message: "查询订单失败"}, err
+		return nil, status.Error(codes.Unavailable, "order store unavailable")
 	}
 	if ord.UserID != req.UserId {
 		return &order.PayOrderResponse{Code: e.ERROR, Message: "无权支付该订单"}, nil
@@ -222,7 +198,7 @@ func (s *OrderService) PayOrder(ctx context.Context, req *order.PayOrderRequest)
 		if errors.Is(err, dao.ErrOrderStatusChanged) {
 			return &order.PayOrderResponse{Code: e.ERROR_ORDER_STATUS_CHANGED, Message: e.GetMsg(e.ERROR_ORDER_STATUS_CHANGED)}, nil
 		}
-		return &order.PayOrderResponse{Code: e.ERROR, Message: "支付失败"}, err
+		return nil, status.Error(codes.Unavailable, "order store unavailable")
 	}
 	return &order.PayOrderResponse{Code: e.SUCCESS, Message: "支付成功"}, nil
 }

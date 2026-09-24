@@ -1,0 +1,16 @@
+.git
+.github
+.idea
+.gitignore
+.dockerignore
+README.md
+seckill_data.json
+docker.sh
+deploy/
+scripts/
+*.log
+logs/
+tmp/
+temp/
+config/config.yaml
+config/config.yaml.example

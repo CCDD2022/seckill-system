@@ -29,15 +29,17 @@ func NewJWTUtil(secret string, expireHours int) *JWTUtil {
 type Claims struct {
 	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
+	IsAdmin  bool   `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
 // GenerateToken 生成 JWT token，返回token和过期时间
-func (j *JWTUtil) GenerateToken(userID int64, username string) (string, error) {
+func (j *JWTUtil) GenerateToken(userID int64, username string, isAdmin bool) (string, error) {
 	expiresAt := time.Now().Add(j.expireTime)
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
+		IsAdmin:  isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

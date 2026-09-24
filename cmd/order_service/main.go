@@ -7,7 +7,6 @@ import (
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
-	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/internal/service"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
@@ -27,19 +26,7 @@ func main() {
 	logger.Info("数据库连接成功")
 	orderDao := dao.NewOrderDao(db)
 
-	mqPool, err := mq.Init(&cfg.MQ)
-	if err != nil {
-		logger.Warn("init mq failed", "err", err)
-	}
-
-	// 声明基础交换机
-	if mqPool != nil {
-		if err := mqPool.EnsureBaseTopology(); err != nil {
-			logger.Warn("ensure exchange failed", "err", err)
-		}
-	}
-
-	orderService := service.NewOrderServiceWithMQ(orderDao, mqPool)
+	orderService := service.NewOrderService(orderDao)
 	grpcServer := grpc.NewServer()
 	reflection.Register(grpcServer)
 	order.RegisterOrderServiceServer(grpcServer, orderService)

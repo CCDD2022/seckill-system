@@ -35,6 +35,12 @@ logs/
 
 # Config files (keep example files)
 config/config.yaml
+config/*.local.yaml
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
 
 # Temporary files
 tmp/
@@ -43,17 +49,6 @@ temp/
 # Build artifacts
 /dist/
 
-/proto_output
-
-
-*.md
-
-!README.md
-
 pids
 
 output.json
-
-scripts
-
-config/config.docker.yaml

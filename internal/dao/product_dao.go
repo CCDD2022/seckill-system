@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -15,14 +16,22 @@ import (
 )
 
 type ProductDao struct {
-	db    *gorm.DB
-	redis redis.UniversalClient
+	db                *gorm.DB
+	redis             redis.UniversalClient
+	reservationStream string
 }
+
+var (
+	ErrProductInUse           = errors.New("product has active or historical order references")
+	ErrProductImmutable       = errors.New("campaign inventory, time and price are immutable")
+	ErrProductCreateUncertain = errors.New("product creation outcome is uncertain")
+)
 
 func NewProductDao(db *gorm.DB, redis redis.UniversalClient) *ProductDao {
 	return &ProductDao{
-		db:    db,
-		redis: redis,
+		db:                db,
+		redis:             redis,
+		reservationStream: ReservationStream,
 	}
 }
 
@@ -106,23 +115,160 @@ func (dao *ProductDao) GetProductByID(ctx context.Context, id int64) (*model.Pro
 
 // CreateProduct 创建商品
 func (dao *ProductDao) CreateProduct(ctx context.Context, product *model.Product) (int64, error) {
-	err := dao.db.WithContext(ctx).Create(product).Error
+	if product.Stock < 0 {
+		return 0, errors.New("初始库存不能为负数")
+	}
+	if (product.SeckillStartTime == nil) != (product.SeckillEndTime == nil) ||
+		(product.SeckillStartTime != nil && !product.SeckillStartTime.Before(*product.SeckillEndTime)) {
+		return 0, errors.New("秒杀活动时间无效")
+	}
+	if !model.ValidProductPrice(product.Price) {
+		return 0, errors.New("商品价格无效")
+	}
+	seededStock := false
+	readyToCommit := false
+	err := dao.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(product).Error; err != nil {
+			return err
+		}
+		// The product remains invisible to other DB readers until commit. Seed
+		// Redis before committing so a failed seed also rolls back the row.
+		ok, err := dao.redis.SetNX(ctx, getProductStockKey(product.ID), product.Stock, 0).Result()
+		if err != nil {
+			return fmt.Errorf("初始化库存失败: %w", err)
+		}
+		if !ok {
+			return errors.New("新商品库存键已存在，拒绝覆盖")
+		}
+		seededStock = true
+		if product.SeckillStartTime != nil {
+			if err := dao.redis.HSet(ctx, campaignKey(product.ID),
+				"active", 0,
+				"price_cents", int64(math.Round(product.Price*100)),
+				"start_unix", product.SeckillStartTime.Unix(),
+				"end_unix", product.SeckillEndTime.Unix(),
+			).Err(); err != nil {
+				return fmt.Errorf("初始化活动元数据失败: %w", err)
+			}
+		}
+		readyToCommit = true
+		return nil
+	})
 	if err != nil {
-		return 0, err
+		if !seededStock {
+			return 0, err
+		}
+		verifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if !readyToCommit {
+			// A callback failure happens before COMMIT; GORM rolled back the
+			// transaction. Cleaning up the provisional Redis keys is safe.
+			if cleanupErr := dao.redis.Del(verifyCtx, getProductStockKey(product.ID), campaignKey(product.ID)).Err(); cleanupErr != nil {
+				return product.ID, fmt.Errorf("%w: product %d rolled back but Redis cleanup failed: %v", ErrProductCreateUncertain, product.ID, cleanupErr)
+			}
+			return 0, err
+		}
+		// The COMMIT response can be lost after MySQL committed. Query the
+		// primary to recover a confirmed row. An uncertain result keeps the
+		// campaign inactive so a guessed product ID cannot sell orphan stock.
+		var persisted model.Product
+		lookupErr := dao.db.WithContext(verifyCtx).Select("id").First(&persisted, "id = ?", product.ID).Error
+		switch {
+		case lookupErr == nil:
+			if activateErr := dao.activateCampaign(product.ID, product.SeckillStartTime != nil); activateErr != nil {
+				return product.ID, fmt.Errorf("%w: product %d committed but activation could not be verified: %v", ErrProductCreateUncertain, product.ID, activateErr)
+			}
+			return product.ID, nil
+		case errors.Is(lookupErr, gorm.ErrRecordNotFound):
+			// An immediate read does not prove an in-flight COMMIT will never
+			// appear. Keep the Redis campaign inactive for later reconciliation.
+			return product.ID, fmt.Errorf("%w: product %d was not visible after ambiguous COMMIT", ErrProductCreateUncertain, product.ID)
+		default:
+			logger.Error("product commit outcome could not be verified; campaign remains inactive", "product_id", product.ID, "err", lookupErr)
+			return product.ID, fmt.Errorf("%w: product %d needs reconciliation", ErrProductCreateUncertain, product.ID)
+		}
+	}
+	if err := dao.activateCampaign(product.ID, product.SeckillStartTime != nil); err != nil {
+		return product.ID, fmt.Errorf("%w: product %d committed but campaign activation failed: %v", ErrProductCreateUncertain, product.ID, err)
 	}
 	return product.ID, nil
 }
 
+func (dao *ProductDao) activateCampaign(productID int64, campaignExpected bool) error {
+	if !campaignExpected {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	exists, err := dao.redis.Exists(ctx, campaignKey(productID)).Result()
+	if err != nil {
+		return err
+	}
+	if exists == 0 {
+		return errors.New("campaign metadata is missing")
+	}
+	return dao.redis.HSet(ctx, campaignKey(productID), "active", 1).Err()
+}
+
 // DeleteProductByID 删除商品
 func (dao *ProductDao) DeleteProductByID(ctx context.Context, id int64) error {
+	var product model.Product
+	if err := dao.db.WithContext(ctx).Select("id", "seckill_start_time").First(&product, "id = ?", id).Error; err != nil {
+		return err
+	}
+	if product.SeckillStartTime != nil {
+		return fmt.Errorf("%w: 秒杀商品需保留以供订单和库存审计", ErrProductInUse)
+	}
+	// A reservation can still be waiting in Redis or RabbitMQ when there is no
+	// order row yet. Keep the product until both accepted work and orders are
+	// absent, otherwise cancellation/reconciliation loses its target.
+	participants, err := dao.redis.SCard(ctx, fmt.Sprintf("seckill:joined:product:%d", id)).Result()
+	if err != nil {
+		return fmt.Errorf("检查预占记录失败: %w", err)
+	}
+	if participants > 0 {
+		return fmt.Errorf("%w: 商品已有秒杀预占记录", ErrProductInUse)
+	}
+	var orders int64
+	if err := dao.db.WithContext(ctx).Model(&model.Order{}).Where("product_id = ?", id).Count(&orders).Error; err != nil {
+		return err
+	}
+	if orders > 0 {
+		return fmt.Errorf("%w: 商品已有订单", ErrProductInUse)
+	}
+	if err := dao.db.WithContext(ctx).Delete(&model.Product{}, id).Error; err != nil {
+		return err
+	}
 	dao.ClearProductCache(ctx, id)
-	return dao.db.WithContext(ctx).Delete(&model.Product{}, id).Error
+	_ = dao.redis.Del(ctx, getProductStockKey(id), campaignKey(id)).Err()
+	return nil
 }
 
 // UpdateProduct 更新商品
 func (dao *ProductDao) UpdateProduct(ctx context.Context, id int64, updates map[string]interface{}) error {
+	if _, stockChange := updates["stock"]; stockChange {
+		return ErrProductImmutable
+	}
+	if _, change := updates["seckill_start_time"]; change {
+		return ErrProductImmutable
+	}
+	if _, change := updates["seckill_end_time"]; change {
+		return ErrProductImmutable
+	}
+	if _, change := updates["price"]; change {
+		var current model.Product
+		if err := dao.db.WithContext(ctx).Select("id", "seckill_start_time").First(&current, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if current.SeckillStartTime != nil {
+			return ErrProductImmutable
+		}
+	}
+	if err := dao.db.WithContext(ctx).Model(&model.Product{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+		return err
+	}
 	dao.ClearProductCache(ctx, id)
-	return dao.db.WithContext(ctx).Model(&model.Product{}).Where("id = ?", id).Updates(updates).Error
+	return nil
 }
 
 // ListProductsFromDBWithStatus 从数据库分页查询商品，支持状态筛选（-1 表示全部）
@@ -190,170 +336,4 @@ func (dao *ProductDao) GetProductPrice(ctx context.Context, id int64) (float64, 
 	// 回写价格缓存，较长TTL（价格非高频变动），具体变更时由更新路径清缓存或重置
 	_ = dao.redis.Set(ctx, priceKey, fmt.Sprintf("%f", p.Price), 20*time.Minute).Err()
 	return p.Price, nil
-}
-
-// DeductStock 优化 - Lua脚本返回状态码，避免额外Redis调用
-func (dao *ProductDao) DeductStock(ctx context.Context, productID int64, quantity int32) error {
-	if quantity <= 0 {
-		return errors.New("扣减数量必须大于0")
-	}
-
-	redisKey := getProductStockKey(productID)
-
-	luaScript := `
-        local stock = redis.call('get', KEYS[1])
-        if not stock then
-            return -1  -- 键不存在
-        end
-        
-        local stockNum = tonumber(stock)
-        local quantity = tonumber(ARGV[1])
-        
-        if stockNum < quantity then
-            return -2  -- 库存不足
-        end
-        
-        redis.call('decrby', KEYS[1], quantity)
-        return stockNum - quantity  -- 成功，返回新库存值
-    `
-
-	result, err := dao.redis.Eval(ctx, luaScript, []string{redisKey}, quantity).Result()
-	if err != nil {
-		return fmt.Errorf("redis执行失败: %w", err)
-	}
-
-	stockResult := result.(int64)
-	switch stockResult {
-	case -1:
-		// 键不存在，安全预热后重试
-		logger.Warn("库存键不存在，尝试预热", "product_id", productID)
-		return dao.safeInitStockAndDeduct(ctx, productID, quantity)
-	case -2:
-		return errors.New("库存不足")
-	}
-
-	// 成功：stockResult是新库存值
-	logger.Debug("库存扣减成功", "product_id", productID, "quantity", quantity, "new_stock", stockResult)
-
-	// 标记该商品库存已变更，交由对账批处理服务合并更新MySQL
-	_ = dao.redis.SAdd(ctx, productDirtySetKey, strconv.FormatInt(productID, 10)).Err()
-
-	// 延迟双删缓存
-	// 为什么这样做?
-	// 假设缓存和mysql都是100库存
-	// 假设A扣减1个库存 扣减完是99 然后A删除商品缓存 此时商品信息缓存为空
-	// 然后B查询商品信息 会从mysql加载库存100到缓存
-	// 然后A更新mysql的请求才到  更新mysql库存99
-	// 这样就会出现mysql库存99 缓存库存100的问题
-	// 所以我们需要延迟再删除一次缓存 避免这种情况发生
-	dao.ClearProductCache(ctx, productID)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		// Fix: 异步任务不能使用请求的ctx，因为请求结束ctx会被cancel，导致操作失败
-		// 使用 context.Background() 确保后台任务能执行
-		dao.ClearProductCache(context.Background(), productID)
-	}()
-
-	return nil
-}
-
-// safeInitStockAndDeduct 带分布式锁的安全预热与重试
-func (dao *ProductDao) safeInitStockAndDeduct(ctx context.Context, productID int64, quantity int32) error {
-	lockKey := fmt.Sprintf("lock:init:stock:%d", productID)
-
-	// 获取分布式锁（10秒过期，防止死锁）
-	// 这里锁的意义 防止多人从mysql里加载 然后扣减导致超卖
-	// setNX 只有该键不存在的时候才能被设置
-	acquired, err := dao.redis.SetNX(ctx, lockKey, 1, 30*time.Second).Result()
-	if err != nil {
-		return errors.New("系统繁忙")
-	}
-
-	if !acquired {
-		// 未获取到锁，说明已有线程在加载，等待一段时间后重试扣减
-		time.Sleep(200 * time.Millisecond)
-		return dao.DeductStock(ctx, productID, quantity)
-	}
-
-	defer dao.redis.Del(ctx, lockKey) // 确保释放锁
-
-	// 双重检查（DCL模式）
-	// 万一当我拿到锁的时候 别人就已经加载好了
-	redisKey := getProductStockKey(productID)
-	if exists, _ := dao.redis.Exists(ctx, redisKey).Result(); exists == 0 {
-		if err := dao.initStockFromMySQL(ctx, productID); err != nil {
-			logger.Error("库存预热失败", "product_id", productID, "err", err)
-			return fmt.Errorf("系统初始化中: %w", err)
-		}
-		logger.Info("库存预热成功", "product_id", productID)
-	}
-
-	// 重试扣减
-	return dao.DeductStock(ctx, productID, quantity)
-}
-
-// initStockFromMySQL 从MySQL加载库存（不adjust）
-func (dao *ProductDao) initStockFromMySQL(ctx context.Context, productID int64) error {
-	var product model.Product
-	if err := dao.db.WithContext(ctx).First(&product, productID).Error; err != nil {
-		return err
-	}
-	redisKey := getProductStockKey(productID)
-	return dao.redis.Set(ctx, redisKey, product.Stock, 0).Err()
-}
-
-// ReturnStock 归还库存（Redis优化版）- Lua返回状态码
-func (dao *ProductDao) ReturnStock(ctx context.Context, productID int64, quantity int32) error {
-	if quantity <= 0 {
-		return errors.New("归还数量必须大于0")
-	}
-
-	redisKey := getProductStockKey(productID)
-
-	luaScript := `
-        local stock = redis.call('get', KEYS[1])
-        if not stock then
-            return -1  -- 键不存在
-        end
-        
-        local stockNum = tonumber(stock)
-        local quantity = tonumber(ARGV[1])
-        local newStock = stockNum + quantity
-        
-        -- 优化点：上限保护（防止库存膨胀攻击）
-        if newStock > 1000000 then
-            return -2  -- 超过上限
-        end
-        
-        redis.call('incrby', KEYS[1], quantity)
-        return newStock  -- 成功，返回新库存值
-    `
-
-	result, err := dao.redis.Eval(ctx, luaScript, []string{redisKey}, quantity).Result()
-	if err != nil {
-		return fmt.Errorf("redis执行失败: %w", err)
-	}
-
-	returnValue := result.(int64)
-	switch returnValue {
-	case -1:
-		// 激进派策略：Redis是唯一真理。如果键不存在，说明数据丢失或未预热，不能贸然从MySQL加载（因为MySQL是归档，可能滞后）
-		// 此时应报错，进入死信队列，由人工确认处理
-		return errors.New("库存键不存在(Redis数据丢失)，无法归还，请人工介入")
-	case -2:
-		return errors.New("库存超过上限，异常")
-	}
-
-	logger.Debug("库存归还成功", "product_id", productID, "new_stock", returnValue)
-
-	// 标记该商品库存已变更，交由对账批处理服务合并更新MySQL
-	_ = dao.redis.SAdd(ctx, productDirtySetKey, strconv.FormatInt(productID, 10)).Err()
-	// 延迟双删，保持与扣减路径一致，降低脏读概率
-	dao.ClearProductCache(ctx, productID)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		dao.ClearProductCache(context.Background(), productID)
-	}()
-
-	return nil
 }

@@ -1,19 +1,20 @@
-// ProductConsumer RabbitMQ 订单取消事件消费入口
 package main
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/CCDD2022/seckill-system/internal/dao"
 	"github.com/CCDD2022/seckill-system/internal/dao/mysql"
 	rds "github.com/CCDD2022/seckill-system/internal/dao/redis"
+	"github.com/CCDD2022/seckill-system/internal/model"
 	"github.com/CCDD2022/seckill-system/internal/mq"
 	"github.com/CCDD2022/seckill-system/pkg/app"
 	"github.com/CCDD2022/seckill-system/pkg/logger"
 	"github.com/streadway/amqp"
+	"gorm.io/gorm"
 )
 
 type OrderCanceledEvent struct {
@@ -25,17 +26,8 @@ type OrderCanceledEvent struct {
 	Quantity   int32  `json:"quantity"`
 }
 
-const (
-	queueOrderCanceled = "order.canceled"
-	eventDedupKeyFmt   = "event:order.canceled:%s"
-	// 死信交换机与队列配置
-	dlxName = "seckill.dlx"
-)
-
 func main() {
-
 	cfg := app.BootstrapApp()
-
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
 		logger.Fatal("连接Mysql数据库失败", "err", err)
@@ -44,65 +36,59 @@ func main() {
 	if err != nil {
 		logger.Fatal("连接Redis失败", "err", err)
 	}
+	orderDao := dao.NewOrderDao(db)
 	productDao := dao.NewProductDao(db, rdb)
 
-	// 1. 配置主队列参数，指定死信交换机
-	args := amqp.Table{
-		"x-dead-letter-exchange": dlxName,
+	if err := mq.EnsureOrderDeadLetters(&cfg.MQ); err != nil {
+		logger.Fatal("setup dead letter queue failed", "err", err)
 	}
-
-	// 2. 启动消费者，绑定 order.canceled
-	conn, consumerCh, msgs, err := mq.NewConsumerChannel(&cfg.MQ, queueOrderCanceled, "order.canceled", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch, args)
+	args := amqp.Table{"x-dead-letter-exchange": "seckill.dlx"}
+	conn, ch, msgs, err := mq.NewConsumerChannel(&cfg.MQ, "order.canceled", "order.canceled", "seckill.exchange", true, cfg.MQ.ConsumerPrefetch, args)
 	if err != nil {
-		logger.Fatal("init consumer channel failed", "err", err)
+		logger.Fatal("init cancellation consumer failed", "err", err)
 	}
-	defer func() { mq.CloseConsumer(conn, consumerCh) }()
+	defer mq.CloseConsumer(conn, ch)
+	logger.Info("Order cancellation consumer started")
 
-	logger.Info("Product Consumer started, waiting for order.canceled events...")
-	forever := make(chan bool)
-
-	go func() {
-		for d := range msgs {
-			var evt OrderCanceledEvent
-			if err := json.Unmarshal(d.Body, &evt); err != nil {
-				logger.Error("取消事件解析失败", "err", err)
-				// 拒绝消费某条消息，不重试，进入死信队列
-				d.Nack(false, false)
-				continue
-			}
-			// 幂等去重（Redis SETNX）
-			dedupKey := fmt.Sprintf(eventDedupKeyFmt, evt.EventID)
-			ok, derr := rdb.SetNX(context.Background(), dedupKey, 1, 24*time.Hour).Result()
-			if derr != nil {
-				logger.Error("去重键写入失败", "err", derr)
-				// 临时错误，允许重试（requeue=true）
-				// 或者也可以选择进入死信队列，视业务容忍度而定
-				d.Nack(false, true)
-				continue
-			}
-			if !ok {
-				// 这个代表已经处理过该事件
-				d.Ack(false)
-				continue
-			}
-			// 归还库存
-			if evt.Quantity > 0 && evt.ProductID > 0 {
-				// 注意：在激进派模式下，ReturnStock 应该只操作 Redis
-				// 因为 MySQL 的库存是由 Reconciler 异步同步的
-				// 如果这里直接操作 MySQL，可能会与 Reconciler 冲突
-				// 但考虑到取消订单是低频操作，且 ReturnStock 内部逻辑通常是先改 DB 再删缓存
-				// 为了保持一致性，建议 ReturnStock 也改为只操作 Redis（增加库存），并标记 dirty
-				if err := productDao.ReturnStock(context.Background(), evt.ProductID, evt.Quantity); err != nil {
-					logger.Error("归还库存失败", "product_id", evt.ProductID, "qty", evt.Quantity, "err", err)
-					// 业务处理失败，进入死信队列，人工介入
-					d.Nack(false, false)
-					_ = rdb.Del(context.Background(), dedupKey).Err()
-					continue
-				}
-				logger.Info("归还库存成功", "product_id", evt.ProductID, "qty", evt.Quantity, "order_id", evt.OrderID)
-			}
-			d.Ack(false)
+	for d := range msgs {
+		var evt OrderCanceledEvent
+		if err := json.Unmarshal(d.Body, &evt); err != nil || evt.EventID == "" || evt.OrderID <= 0 || evt.UserID <= 0 || evt.ProductID <= 0 || evt.Quantity <= 0 || d.MessageId != evt.EventID {
+			logger.Error("invalid cancellation event", "message_id", d.MessageId, "err", err)
+			_ = d.Nack(false, false)
+			continue
 		}
-	}()
-	<-forever
+		// Only a committed cancellation may restore stock. This also prevents
+		// a malformed/forged event from incrementing an unrelated product.
+		ord, err := orderDao.GetOrderByID(context.Background(), evt.OrderID)
+		if err != nil {
+			logger.Error("lookup canceled order failed", "order_id", evt.OrderID, "err", err)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				_ = d.Nack(false, false)
+			} else {
+				time.Sleep(time.Second)
+				_ = d.Nack(false, true)
+			}
+			continue
+		}
+		if ord.Status != model.OrderStatusCancelled || ord.UserID != evt.UserID || ord.ProductID != evt.ProductID || ord.Quantity != evt.Quantity {
+			logger.Error("cancellation event does not match canceled order", "event_id", evt.EventID)
+			_ = d.Nack(false, false)
+			continue
+		}
+		// ReturnStockOnce updates stock, dirty tracking, and the event marker
+		// in one Redis Lua operation. ACK follows only after that operation.
+		if err := productDao.ReturnStockOnce(context.Background(), evt.ProductID, evt.Quantity, evt.EventID); err != nil {
+			logger.Error("restore stock failed", "event_id", evt.EventID, "err", err)
+			if errors.Is(err, dao.ErrStockNotInitialized) || errors.Is(err, dao.ErrStockStateInvalid) {
+				_ = d.Nack(false, false)
+			} else {
+				time.Sleep(time.Second)
+				_ = d.Nack(false, true)
+			}
+			continue
+		}
+		if err := d.Ack(false); err != nil {
+			logger.Error("cancellation ACK failed; broker will redeliver", "event_id", evt.EventID, "err", err)
+		}
+	}
 }

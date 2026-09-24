@@ -8,6 +8,8 @@ import (
 	"github.com/CCDD2022/seckill-system/pkg/e"
 	"github.com/CCDD2022/seckill-system/pkg/utils"
 	"github.com/CCDD2022/seckill-system/proto_output/user"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"gorm.io/gorm"
 )
@@ -35,10 +37,7 @@ func (s *UserService) GetUser(ctx context.Context, req *user.GetUserRequest) (*u
 			}, nil
 		}
 
-		return &user.GetUserResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "user store unavailable")
 	}
 
 	return &user.GetUserResponse{
@@ -65,10 +64,7 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 				Message: e.GetMsg(e.ERROR_USER_NOT_EXISTS),
 			}, nil
 		}
-		return &user.UpdateUserResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "user store unavailable")
 	}
 
 	// 2. 构建更新字段（只有 email 和 phone）
@@ -90,14 +86,14 @@ func (s *UserService) UpdateUser(ctx context.Context, req *user.UpdateUserReques
 
 	// 4. 执行更新
 	if err := s.userDao.UpdateUser(ctx, req.GetUserId(), updates); err != nil {
-		return &user.UpdateUserResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "user store unavailable")
 	}
 
 	// 5. 获取最新信息返回
-	updatedUser, _ := s.userDao.GetUserByID(ctx, req.GetUserId())
+	updatedUser, err := s.userDao.GetUserByID(ctx, req.GetUserId())
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "user store unavailable")
+	}
 	return &user.UpdateUserResponse{
 		Code:    e.SUCCESS,
 		Message: e.GetMsg(e.SUCCESS),
@@ -122,10 +118,7 @@ func (s *UserService) ChangePassword(ctx context.Context, req *user.ChangePasswo
 				Message: e.GetMsg(e.ERROR_USER_NOT_EXISTS),
 			}, nil
 		}
-		return &user.ChangePasswordResponse{
-			Code:    e.ERROR,
-			Message: e.GetMsg(e.ERROR),
-		}, err
+		return nil, status.Error(codes.Unavailable, "user store unavailable")
 	}
 
 	if !utils.CheckPassword(req.OldPassword, userInfo.PasswordHash) {
@@ -137,20 +130,17 @@ func (s *UserService) ChangePassword(ctx context.Context, req *user.ChangePasswo
 
 	// 2. 校验新密码长度
 	if len(req.NewPassword) < 8 {
-		return &user.ChangePasswordResponse{
-			Code:    e.ERROR,
-			Message: "新密码长度至少8位",
-		}, nil
+		return &user.ChangePasswordResponse{Code: e.INVALID_PARAMS, Message: "新密码长度至少 8 位"}, nil
 	}
 
 	// 3. 加密并更新密码
 	newHash, err := utils.HashPassword(req.NewPassword)
 	if err != nil {
-		return &user.ChangePasswordResponse{Code: e.ERROR, Message: e.GetMsg(e.ERROR)}, err
+		return nil, status.Error(codes.Internal, "password hashing failed")
 	}
 
 	if err := s.userDao.UpdateUserPassword(ctx, req.GetUserId(), newHash); err != nil {
-		return &user.ChangePasswordResponse{Code: e.ERROR, Message: e.GetMsg(e.ERROR)}, err
+		return nil, status.Error(codes.Unavailable, "user store unavailable")
 	}
 
 	return &user.ChangePasswordResponse{

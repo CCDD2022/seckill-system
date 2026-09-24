@@ -30,7 +30,8 @@ func main() {
 	}
 
 	// 初始化Gin引擎
-	r := gin.Default()
+	r := gin.New()
+	configureErrorResponses(r)
 
 	// CORS 跨域配置
 	r.Use(cors.New(cors.Config{
@@ -56,7 +57,7 @@ func main() {
 	// 在这里 每个client
 	clients, err := grpc.InitClients(cfg)
 	if err != nil {
-		logger.Error("Failed to init gRPC clients: ", "err", err)
+		logger.Fatal("Failed to init gRPC clients: ", "err", err)
 	}
 
 	// JWT 工具
@@ -103,4 +104,19 @@ func main() {
 	if err := r.Run(serverAddr); err != nil {
 		logger.Error("Failed to start API Gateway: ", "err", err)
 	}
+}
+
+func configureErrorResponses(r *gin.Engine) {
+	r.Use(gin.Logger())
+	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		v1.WriteProblem(c, http.StatusInternalServerError, "internal_error", "服务器暂时无法处理请求")
+		c.Abort()
+	}))
+	r.HandleMethodNotAllowed = true
+	r.NoRoute(func(c *gin.Context) {
+		v1.WriteProblem(c, http.StatusNotFound, "route_not_found", "请求的路径不存在")
+	})
+	r.NoMethod(func(c *gin.Context) {
+		v1.WriteProblem(c, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不被允许")
+	})
 }

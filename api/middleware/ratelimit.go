@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/CCDD2022/seckill-system/config"
-	"github.com/CCDD2022/seckill-system/pkg/e"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
@@ -63,10 +62,8 @@ func RateLimitMiddleware(r rate.Limit, b int) gin.HandlerFunc {
 		limiterForIP := limiter.GetLimiter(ip)
 
 		if !limiterForIP.Allow() {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"code":    e.ERROR,
-				"message": "请求过于频繁，请稍后再试",
-			})
+			c.Header("Retry-After", "1")
+			writeProblem(c, http.StatusTooManyRequests, "rate_limited", "请求过于频繁，请稍后重试")
 			c.Abort()
 			return
 		}

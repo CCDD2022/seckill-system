@@ -23,7 +23,7 @@ func main() {
 	// 连接数据库
 	db, err := mysql.InitDB(&cfg.Database.Mysql)
 	if err != nil {
-		logger.Error("连接Mysql数据库失败: ", "err", err)
+		logger.Fatal("连接Mysql数据库失败: ", "err", err)
 	}
 	logger.Info("顺利连接数据库")
 
@@ -41,7 +41,7 @@ func main() {
 	// 启动 gRPC 服务器
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Services.UserService.Host, cfg.Services.UserService.Port))
 	if err != nil {
-		logger.Error("Failed to listen: ", "err", err)
+		logger.Fatal("Failed to listen: ", "err", err)
 	}
 
 	logger.Info("User gRPC service started on :", "port", cfg.Services.UserService.Port)

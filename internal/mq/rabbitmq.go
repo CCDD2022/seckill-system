@@ -1,11 +1,8 @@
 package mq
 
-// 高并发生产者专用 RabbitMQ 封装：
-// - 根据配置初始化连接与生产者通道池
-// - 使用异步 Confirm：发布后不阻塞等待 ACK，后台协程统一处理
-// - 消费者不使用池，每个消费者独立创建 Channel
-
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -15,24 +12,33 @@ import (
 	"github.com/streadway/amqp"
 )
 
+// ErrPublishUncertain means that the connection failed or confirmation timed out
+// after Publish was attempted. The broker may have accepted the message. Callers
+// must not compensate a reservation merely because this error was returned.
+var ErrPublishUncertain = errors.New("rabbitmq publish outcome uncertain")
+
+var ErrPoolClosed = errors.New("rabbitmq producer pool closed")
+
+const publishConfirmTimeout = 10 * time.Second
+
 type ChannelWrapper struct {
-	ch *amqp.Channel
-	// 只读通道  接收发布确认结果(来自rabbitMQ服务器)
+	ch       *amqp.Channel
 	confirms <-chan amqp.Confirmation
+	returns  <-chan amqp.Return
 }
 
-// Pool 维护一个连接与一组生产者通道（带异步确认处理）。
+// Pool lends each producer channel exclusively until its message has been
+// confirmed. This keeps a confirmation and a returned message associated with
+// the publish that produced them.
 type Pool struct {
 	conn     *amqp.Connection
 	channels chan *ChannelWrapper
-	size     int
-	mu       sync.Mutex // 防止Close被并发调用
+	done     chan struct{}
+	mu       sync.Mutex
 	closed   bool
 }
 
-// Init 创建连接与生产者通道池，所有通道开启 Confirm 模式并启动后台确认处理。
 func Init(cfg *config.MQConfig) (*Pool, error) {
-	// 连接rabbitMQ服务器
 	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.User, cfg.Password, cfg.Host, cfg.Port)
 	conn, err := amqp.Dial(url)
 	if err != nil {
@@ -42,15 +48,12 @@ func Init(cfg *config.MQConfig) (*Pool, error) {
 	if size <= 0 {
 		size = 24
 	}
-
-	// 创建通道池
-	p := &Pool{conn: conn, channels: make(chan *ChannelWrapper, size), size: size}
-	// 创建异步确认信道 不会阻塞在这条信道上publish的goroutine
+	p := &Pool{conn: conn, channels: make(chan *ChannelWrapper, size), done: make(chan struct{})}
 	for i := 0; i < size; i++ {
 		cw, err := p.createChannelWrapper()
 		if err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("open channel failed: %w", err)
+			p.Close()
+			return nil, fmt.Errorf("open producer channel failed: %w", err)
 		}
 		p.channels <- cw
 	}
@@ -58,93 +61,184 @@ func Init(cfg *config.MQConfig) (*Pool, error) {
 	return p, nil
 }
 
-// createChannelWrapper 创建一个带异步确认处理的生产者通道包装
 func (p *Pool) createChannelWrapper() (*ChannelWrapper, error) {
 	ch, err := p.conn.Channel()
-	// 设置channel为异步确认模式
 	if err != nil {
 		return nil, err
 	}
 	if err := ch.Confirm(false); err != nil {
 		_ = ch.Close()
-		return nil, fmt.Errorf("enable confirm failed: %w", err)
+		return nil, fmt.Errorf("enable publisher confirms failed: %w", err)
 	}
+	return &ChannelWrapper{
+		ch:       ch,
+		confirms: ch.NotifyPublish(make(chan amqp.Confirmation, 1)),
+		returns:  ch.NotifyReturn(make(chan amqp.Return, 1)),
+	}, nil
+}
 
-	// 创建确认监听器  返回带缓冲的确认通道
-	// 可积压1024个确认结果，避免阻塞发布协程
-	conf := ch.NotifyPublish(make(chan amqp.Confirmation, 1024))
-	// 后台异步处理确认结果：仅记录 Nack
-	go func(c <-chan amqp.Confirmation) {
-		for cf := range c {
-			// Ack=true表示消息已经成功送到rabbitMQ服务器
-			if !cf.Ack {
-				logger.Warn("publish not acked", "delivery_tag", cf.DeliveryTag)
-			}
+func (p *Pool) acquire(ctx context.Context) (*ChannelWrapper, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.done:
+		return nil, ErrPoolClosed
+	case cw := <-p.channels:
+		return cw, nil
+	}
+}
+
+func (p *Pool) release(cw *ChannelWrapper, healthy bool) {
+	if !healthy {
+		_ = cw.ch.Close()
+		var err error
+		cw, err = p.createChannelWrapper()
+		if err != nil {
+			logger.Error("replace producer channel failed", "err", err)
+			p.Close()
+			return
 		}
-	}(conf)
-	return &ChannelWrapper{ch: ch, confirms: conf}, nil
-}
-
-// Acquire 获取一个可用生产者ChannelWrapper
-func (p *Pool) Acquire() *ChannelWrapper {
-	return <-p.channels
-}
-
-// Release 归还生产者ChannelWrapper到池中
-func (p *Pool) Release(cw *ChannelWrapper) {
-	if cw == nil || p.closed {
-		return
 	}
-	p.channels <- cw
+	select {
+	case <-p.done:
+		_ = cw.ch.Close()
+	case p.channels <- cw:
+	}
 }
 
-// Close 关闭所有资源
 func (p *Pool) Close() {
-	// 加锁
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return
 	}
 	p.closed = true
-	// 关闭go channel
-	close(p.channels)
-	// 逐个关闭amqp channels
-	for cw := range p.channels {
-		_ = cw.ch.Close()
-	}
+	close(p.done)
 	_ = p.conn.Close()
 }
 
-// EnsureBaseTopology 仅声明基础交换机，队列由具体消费者声明，避免参数冲突
+// EnsureBaseTopology declares the exchange before any publish. The queues are
+// declared and bound by their consumers.
 func (p *Pool) EnsureBaseTopology() error {
 	ch, err := p.conn.Channel()
 	if err != nil {
 		return err
 	}
 	defer ch.Close()
-	const exchangeName = "seckill.exchange"
-	if err := ch.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
+	if err := ch.ExchangeDeclare("seckill.exchange", "topic", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare exchange failed: %w", err)
 	}
-	logger.Info("Base MQ exchange ensured")
 	return nil
 }
 
-// PublishAsyncWithID 与 PublishAsync 类似，但可设置 AMQP MessageId 供消费者幂等去重
+// EnsureOrderDeadLetters provisions the durable target before either order
+// consumer starts. Both order queues route failed deliveries to this queue.
+func EnsureOrderDeadLetters(cfg *config.MQConfig) error {
+	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.User, cfg.Password, cfg.Host, cfg.Port)
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return fmt.Errorf("dial rabbitmq failed: %w", err)
+	}
+	defer conn.Close()
+	ch, err := conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
+	if err := ch.ExchangeDeclare("seckill.dlx", "topic", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare dead letter exchange failed: %w", err)
+	}
+	if _, err := ch.QueueDeclare("order.create.dlq", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare dead letter queue failed: %w", err)
+	}
+	if err := ch.QueueBind("order.create.dlq", "#", "seckill.dlx", false, nil); err != nil {
+		return fmt.Errorf("bind dead letter queue failed: %w", err)
+	}
+	return nil
+}
+
+// PublishAsyncWithID retains the original API name for callers, but now waits
+// for broker confirmation and rejects unroutable messages. A successful return
+// means RabbitMQ accepted the persistent message for a bound queue, not that
+// the consumer has committed it to the database.
 func (p *Pool) PublishAsyncWithID(exchange, key string, body []byte, messageID string) error {
-	cw := p.Acquire()
-	defer p.Release(cw)
-	return cw.ch.Publish(exchange, key, false, false, amqp.Publishing{
+	return p.PublishConfirmedWithID(context.Background(), exchange, key, body, messageID)
+}
+
+// PublishConfirmedWithID waits for broker confirmation or context cancellation.
+func (p *Pool) PublishConfirmedWithID(ctx context.Context, exchange, key string, body []byte, messageID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cw, err := p.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	healthy := true
+	defer func() { p.release(cw, healthy) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	err = cw.ch.Publish(exchange, key, true, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
 		MessageId:    messageID,
 	})
+	if err != nil {
+		healthy = false
+		return fmt.Errorf("%w: publish failed: %v", ErrPublishUncertain, err)
+	}
+
+	healthy, err = awaitPublishConfirm(ctx, cw.confirms, cw.returns, p.done, messageID, publishConfirmTimeout)
+	return err
 }
 
-// NewConsumerChannel 独立创建用于消费的连接与通道（不依赖生产者池）
+// awaitPublishConfirm is separate from network I/O so the ordering of return,
+// ACK, NACK, timeout and cancellation can be tested deterministically.
+func awaitPublishConfirm(ctx context.Context, confirms <-chan amqp.Confirmation, returns <-chan amqp.Return, done <-chan struct{}, messageID string, timeout time.Duration) (bool, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var returned *amqp.Return
+	for {
+		select {
+		case <-ctx.Done():
+			return false, fmt.Errorf("%w: %v", ErrPublishUncertain, ctx.Err())
+		case ret, ok := <-returns:
+			if !ok {
+				return false, fmt.Errorf("%w: return channel closed", ErrPublishUncertain)
+			}
+			returned = &ret
+		case confirm, ok := <-confirms:
+			if !ok {
+				return false, fmt.Errorf("%w: confirmation channel closed", ErrPublishUncertain)
+			}
+			if !confirm.Ack {
+				return true, fmt.Errorf("rabbitmq nacked message %q", messageID)
+			}
+			// RabbitMQ sends basic.return before basic.ack for mandatory
+			// unroutable messages. Drain in case both channels became ready.
+			select {
+			case ret, ok := <-returns:
+				if ok {
+					returned = &ret
+				}
+			default:
+			}
+			if returned != nil {
+				return true, fmt.Errorf("rabbitmq returned unroutable message %q: %d %s", messageID, returned.ReplyCode, returned.ReplyText)
+			}
+			return true, nil
+		case <-timer.C:
+			return false, fmt.Errorf("%w: confirmation timeout for %q", ErrPublishUncertain, messageID)
+		case <-done:
+			return false, fmt.Errorf("%w: producer pool closed", ErrPublishUncertain)
+		}
+	}
+}
+
 func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, durable bool, prefetch int, args amqp.Table) (*amqp.Connection, *amqp.Channel, <-chan amqp.Delivery, error) {
 	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", cfg.User, cfg.Password, cfg.Host, cfg.Port)
 	conn, err := amqp.Dial(url)
@@ -157,21 +251,17 @@ func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, d
 		return nil, nil, nil, fmt.Errorf("open channel failed: %w", err)
 	}
 	if exchange != "" {
-		// 确保交换机存在
 		if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
 			ch.Close()
 			conn.Close()
 			return nil, nil, nil, fmt.Errorf("declare exchange failed: %w", err)
 		}
 	}
-	// 声明队列
 	if _, err := ch.QueueDeclare(queue, durable, false, false, false, args); err != nil {
 		ch.Close()
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("declare queue failed: %w", err)
 	}
-
-	// 绑定队列到交换机
 	if bindKey != "" && exchange != "" {
 		if err := ch.QueueBind(queue, bindKey, exchange, false, nil); err != nil {
 			ch.Close()
@@ -186,8 +276,6 @@ func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, d
 			return nil, nil, nil, fmt.Errorf("set qos failed: %w", err)
 		}
 	}
-
-	// 生成消息通道   消费者通过这个获取消息
 	msgs, err := ch.Consume(queue, "", false, false, false, false, nil)
 	if err != nil {
 		ch.Close()
@@ -197,7 +285,6 @@ func NewConsumerChannel(cfg *config.MQConfig, queue, bindKey, exchange string, d
 	return conn, ch, msgs, nil
 }
 
-// CloseConsumer 关闭消费者连接与通道
 func CloseConsumer(conn *amqp.Connection, ch *amqp.Channel) {
 	if ch != nil {
 		_ = ch.Close()
